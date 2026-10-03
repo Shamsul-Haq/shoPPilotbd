@@ -1,0 +1,2467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>shoPPilot IMS - Supabase Inventory System</title>
+    <meta name="description" content="shoPPilot Inventory & Retail Management System migrated to Supabase PostgreSQL.">
+    <meta property="og:title" content="shoPPilot IMS - Supabase Inventory System">
+    <meta property="og:description" content="shoPPilot Inventory & Retail Management System migrated to Supabase PostgreSQL.">
+
+    <!-- External Dependencies -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Core UI, Theme, Google Apps Script Bridge & Modal Helpers Bootstrap -->
+    <script>
+        (function() {
+            // Early Google Apps Script bridge so google.script.run is always defined globally from the very first cycle
+            function makeEarlyBridge(successHandler, failureHandler) {
+                return new Proxy({}, {
+                    get: function(target, prop) {
+                        if (prop === 'withSuccessHandler') {
+                            return function(cb) { return makeEarlyBridge(cb, failureHandler); };
+                        }
+                        if (prop === 'withFailureHandler') {
+                            return function(cb) { return makeEarlyBridge(successHandler, cb); };
+                        }
+                        return async function() {
+                            var args = Array.prototype.slice.call(arguments);
+                            try {
+                                if (window.BackendService && typeof window.BackendService[prop] === 'function') {
+                                    var res = await window.BackendService[prop].apply(window.BackendService, args);
+                                    if (successHandler) successHandler(res);
+                                    return res;
+                                } else {
+                                    return new Promise(function(resolve) {
+                                        setTimeout(async function() {
+                                            if (window.BackendService && typeof window.BackendService[prop] === 'function') {
+                                                var res = await window.BackendService[prop].apply(window.BackendService, args);
+                                                if (successHandler) successHandler(res);
+                                                resolve(res);
+                                            } else {
+                                                if (successHandler) successHandler({ success: true });
+                                                resolve({ success: true });
+                                            }
+                                        }, 80);
+                                    });
+                                }
+                            } catch (e) {
+                                if (failureHandler) failureHandler(e);
+                                else if (successHandler) successHandler({ success: false, error: e.message || String(e) });
+                            }
+                        };
+                    }
+                });
+            }
+
+            window.google = window.google || {
+                script: {
+                    run: makeEarlyBridge(null, null)
+                }
+            };
+            try { globalThis.google = window.google; } catch (e) {}
+
+            try {
+                var theme = localStorage.getItem('shoppilot_theme');
+                var isD = theme === 'dark' || (!theme && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                if (isD) {
+                    document.documentElement.setAttribute('data-theme', 'dark');
+                } else {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+                document.addEventListener('DOMContentLoaded', function() {
+                    if (isD) {
+                        document.body && document.body.classList.add('dark-mode');
+                        var ai = document.getElementById('authThemeIcon');
+                        var at = document.getElementById('authThemeText');
+                        if (ai) { ai.className = 'fas fa-sun'; ai.style.color = '#f59e0b'; }
+                        if (at) { at.textContent = 'Light'; }
+                    }
+                });
+            } catch (e) {}
+        })();
+
+        window.switchAppView = function(viewName) {
+            if (window._realSwitchAppView) {
+                return window._realSwitchAppView(viewName);
+            }
+            window.__pendingAppView = viewName;
+            try {
+                document.querySelectorAll('.view-section').forEach(function(sec) { sec.classList.remove('active-view'); });
+                document.querySelectorAll('.nav-link').forEach(function(lnk) { lnk.classList.remove('active'); });
+                var targetSection = document.getElementById('view_' + viewName);
+                if (targetSection) targetSection.classList.add('active-view');
+                document.querySelectorAll('.nav-link').forEach(function(lnk) {
+                    if (lnk.getAttribute('onclick') && lnk.getAttribute('onclick').indexOf("'" + viewName + "'") !== -1) {
+                        lnk.classList.add('active');
+                    }
+                });
+            } catch(e) {}
+        };
+
+        window.openModal = function(idOrEl) {
+            if (!idOrEl) return;
+            var m = (typeof idOrEl === 'string') ? document.getElementById(idOrEl) : idOrEl;
+            if (m && m.style) m.style.display = 'flex';
+        };
+        window.closeModal = function(idOrEl) {
+            if (!idOrEl) return;
+            var m = (typeof idOrEl === 'string') ? document.getElementById(idOrEl) : idOrEl;
+            if (m && m.style) m.style.display = 'none';
+            if (idOrEl === 'quickSaleModal' || (m && m.id === 'quickSaleModal')) {
+                if (window.closeQsBarcodeScanner) window.closeQsBarcodeScanner();
+                document.body.classList.remove('qs-modal-open');
+                document.body.style.overflow = '';
+            }
+            if (idOrEl === 'quickPurchaseModule' || (m && m.id === 'quickPurchaseModule')) {
+                if (window.closeQpBarcodeScanner) window.closeQpBarcodeScanner();
+            }
+            if (idOrEl === 'multiPurchaseModal' || (m && m.id === 'multiPurchaseModal')) {
+                if (window.closeMppBarcodeScanner) window.closeMppBarcodeScanner();
+            }
+        };
+        window.openLogoutModal = function() {
+            var m = document.getElementById('logoutConfirmModal');
+            if (m && m.style) m.style.display = 'flex';
+        };
+        window.executeLogout = function() {
+            var uInp = document.getElementById('authUserId');
+            if (uInp) uInp.value = '';
+            var pInp = document.getElementById('authPassword');
+            if (pInp) {
+                pInp.value = '';
+                pInp.type = 'password';
+            }
+            if (window.BackendService && typeof window.BackendService.logout === 'function') {
+                window.BackendService.logout();
+            } else {
+                try {
+                    localStorage.removeItem('shoppilot_active_user');
+                    sessionStorage.removeItem('shoppilot_active_user');
+                } catch (e) {}
+            }
+            window.location.reload();
+        };
+        function openLogoutModal() { window.openLogoutModal(); }
+        function closeModal(id) { window.closeModal(id); }
+        function openModal(id) { window.openModal(id); }
+        function executeLogout() { window.executeLogout(); }
+    </script>
+
+    <!-- shoPPilot Stylesheet -->
+    <link rel="stylesheet" href="/src/shoppilot.css">
+</head>
+<body>
+
+    <!-- Floating Action Button for Mobile -->
+    <button id="mobileMenuBtn" onclick="toggleMobileMenu()" type="button">
+        <i class="fas fa-bars"></i>
+    </button>
+
+    <div class="container-fluid">
+        <div class="main-container">
+
+            <!-- 1. AUTHENTICATION VIEW (SHOWN IF LOGGED OUT) -->
+            <div id="authView" class="auth-view-container" style="display: none;">
+                <div class="auth-top-actions">
+                    <button type="button" class="btn auth-top-btn" id="authThemeToggleBtn" onclick="window.toggleDarkMode()" title="Toggle Dark / Light Mode">
+                        <i id="authThemeIcon" class="fas fa-moon"></i> <span id="authThemeText">Dark</span>
+                    </button>
+                    <button type="button" class="btn auth-top-btn sync-lang-toggle" onclick="window.toggleAppLanguage()">
+                        <i class="fas fa-language" style="color: #10b981; font-size: 1.15rem;"></i> <span>বাংলায় দেখুন</span>
+                    </button>
+                </div>
+                <div class="auth-card">
+                    <div class="auth-logo-badge">
+                        <i class="fas fa-store"></i>
+                    </div>
+                    <h1 id="authCompanyTitle" class="auth-title">
+                         shoPPilot
+                    </h1>
+                    <p class="auth-subtitle">Inventory & Retail Management (Supabase)</p>
+
+                    <div id="loginErrorMsg" class="auth-error-msg" style="display: none;"></div>
+
+                    <form id="authLoginForm" autocomplete="off" onsubmit="event.preventDefault(); handleLoginSubmit();">
+                        <div class="form-group auth-form-group">
+                            <label class="auth-label">User ID</label>
+                            <input type="text" id="authUserId" class="form-control auth-input" placeholder="Enter User ID" autocomplete="off" value="" required>
+                        </div>
+
+                        <div class="form-group auth-form-group">
+                            <label class="auth-label">Password</label>
+                            <div class="auth-password-wrap">
+                                <input type="password" id="authPassword" class="form-control auth-input" placeholder="••••••••" autocomplete="new-password" value="" required>
+                                <i id="toggleAuthEyeIcon" class="far fa-eye auth-eye-icon" onclick="toggleAuthPassword()"></i>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary btn-auth-submit" id="btnSignIn">
+                            Sign In
+                        </button>
+                    </form>
+
+                    <p class="auth-copyright">
+                        © 2026 SHOPPILOT SYSTEMS LTD.
+                    </p>
+                </div>
+            </div>
+
+            <!-- 2. SIDEBAR NAVIGATION -->
+            <nav class="sidebar" id="sidebar">
+                <div class="sidebar-header">
+                    <div class="logo-area">
+                        <i class="fas fa-shopping-bag logo-icon" style="color: #3b82f6;"></i>
+                        <span class="logo-text" id="sidebarLogoText" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; font-weight: 800; font-size: 1.35rem; letter-spacing: -0.5px; color: #1e293b;">shoPPilot</span>
+                    </div>
+                    <button type="button" id="sidebarToggle" onclick="toggleSidebar()">
+                        <i class="fas fa-chevron-left" id="toggleIcon"></i>
+                    </button>
+                </div>
+
+                <div class="menu-container">
+                    <a class="nav-link active" onclick="switchAppView('dashboard')">
+                        <i class="fas fa-th-large"></i><span>Dashboard</span>
+                    </a>
+                    <a class="nav-link" onclick="switchAppView('warehouse_info')">
+                        <i class="fas fa-warehouse"></i><span>Warehouse Info</span>
+                    </a>
+                    <a class="nav-link" onclick="switchAppView('inventory')">
+                        <i class="fas fa-box-open"></i><span>Inventory</span>
+                    </a>
+                    <a class="nav-link" onclick="switchAppView('products')">
+                        <i class="fas fa-boxes"></i><span>Products</span>
+                    </a>
+                    <a class="nav-link" onclick="switchAppView('sales')">
+                        <i class="fas fa-shopping-cart"></i><span>Sales</span>
+                    </a>
+                    <a class="nav-link" onclick="switchAppView('returns')">
+                        <i class="fas fa-undo-alt"></i><span>Sales Returns</span>
+                    </a>
+                    <a class="nav-link" onclick="switchAppView('purchases')">
+                        <i class="fas fa-history"></i><span>Purchases</span>
+                    </a>
+                    <a class="nav-link" onclick="switchAppView('purchase_returns')">
+                        <i class="fas fa-truck-loading"></i><span>Purchase Returns</span>
+                    </a>
+                    <a class="nav-link" onclick="switchAppView('customers')">
+                        <i class="fas fa-users"></i><span>Customers</span>
+                    </a>
+                    <a class="nav-link" onclick="switchAppView('suppliers')">
+                        <i class="fas fa-truck-loading"></i><span>Suppliers</span>
+                    </a>
+                    <a class="nav-link" onclick="switchAppView('deposits')">
+                        <i class="fas fa-money-check-alt"></i><span>Cash Book/Exp</span>
+                    </a>
+                    <a class="nav-link" onclick="switchAppView('reports')">
+                        <i class="fas fa-chart-bar"></i><span>Reports</span>
+                    </a>
+                    
+                    <div class="sidebar-divider">SYSTEM</div>
+                    
+                    <a class="nav-link" onclick="switchAppView('settings')">
+                        <i class="fas fa-cog"></i><span>Settings</span>
+                    </a>
+                    <a class="nav-link" onclick="switchAppView('data_management')">
+                        <i class="fas fa-database"></i><span>Data Management</span>
+                    </a>
+                    <a class="nav-link" onclick="switchAppView('users')">
+                        <i class="fas fa-user-shield"></i><span>User Roles</span>
+                    </a>
+                    <a class="nav-link" onclick="openSupabaseConfigModal()" style="display: none !important;">
+                        <i class="fas fa-database"></i><span>Supabase Config</span>
+                    </a>
+                </div>
+
+                <div class="sidebar-footer">
+                    <div style="padding: 0 4px 10px 4px; display: flex; gap: 8px;">
+                        <button type="button" class="btn sync-theme-toggle" onclick="window.toggleDarkMode()" title="Toggle Dark/Light Mode" style="flex: 1; height: 38px; border-radius: 8px; font-weight: 700; font-size: 0.82rem; display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--border-color); background: var(--bg-card-muted); color: var(--text-heading); cursor: pointer; transition: all 0.2s ease;">
+                            <i class="fas fa-moon" id="sidebarThemeIcon" style="color: #6366f1;"></i> <span id="sidebarThemeText">Theme</span>
+                        </button>
+                        <button type="button" class="btn sync-lang-toggle" onclick="window.toggleAppLanguage()" style="flex: 1; height: 38px; border-radius: 8px; font-weight: 700; font-size: 0.82rem; display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--border-color); background: var(--bg-card-muted); color: var(--text-heading); cursor: pointer; transition: all 0.2s ease;">
+                            <i class="fas fa-language" style="color: #10b981; font-size: 1.15rem;"></i> <span>বাংলা</span>
+                        </button>
+                    </div>
+                    <div class="user-card">
+                        <div class="user-avatar">A</div>
+                        <div class="user-info">
+                            <span class="user-name">Admin Operator</span>
+                            <span class="user-role-badge" id="sidebarUserRoleBadge" style="display:inline-block; font-size:0.68rem; font-weight:800; padding:1px 6px; border-radius:4px; margin-top:2px; background:#e0f2fe; color:#0369a1; text-transform:uppercase; width: fit-content;">Admin</span>
+                            <button type="button" class="logout-link" onclick="openLogoutModal()">
+                                <i class="fas fa-sign-out-alt"></i> Logout
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </nav>
+
+            <!-- 3. MAIN APPLICATION VIEWS CONTAINER -->
+            <main class="main-content">
+
+                <!-- VIEW: DASHBOARD -->
+                <section id="view_dashboard" class="view-section active-view">
+                    <div class="page-header">
+                        <div>
+                            <h1><i class="fas fa-tachometer-alt"></i> Dashboard</h1>
+                            <p class="subtitle">Powered by Supabase PostgreSQL Database</p>
+                        </div>
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <button type="button" class="btn btn-secondary" onclick="openSupabaseConfigModal()" style="display: none !important;">
+                                <i class="fas fa-database" style="color: #3ecf8e;"></i> Supabase DB
+                            </button>
+                            <button type="button" class="btn btn-primary" onclick="openDocLookupModal()" style="height: 42px; padding: 0 20px; font-weight: 700; border-radius: 10px; background: #4361ee; box-shadow: 0 4px 12px rgba(67, 97, 238, 0.25);">
+                                <i class="fas fa-search"></i> Universal Lookup
+                            </button>
+                            <button type="button" id="btnThemeToggle" class="btn btn-theme-switch" onclick="window.toggleDarkMode()" title="Toggle Dark/Light Mode" style="display: none !important;">
+                                <i class="fas fa-moon" id="btnThemeToggleIcon" style="color: #6366f1;"></i>
+                                <span id="btnThemeToggleText">Dark</span>
+                            </button>
+                            <button type="button" id="btnLanguageToggle" class="btn btn-lang-switch" onclick="window.toggleAppLanguage()" style="display: none !important;">
+                                <i class="fas fa-language" style="font-size: 1.25rem;"></i>
+                                <span id="langToggleLabel">বাংলায় দেখুন <span style="font-size:0.75rem; opacity:0.9; margin-left:4px;">(বাং)</span></span>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="kpi-grid-8" id="kpiCards">
+                        <div class="kpi-card"><div class="kpi-icon-sm" style="background:var(--success)"><i class="fas fa-shopping-cart"></i></div><div class="kpi-content"><p>Today Sales</p><div class="kpi-value-sm" id="todaySales">৳ 0</div></div></div>
+                        <div class="kpi-card"><div class="kpi-icon-sm" style="background:var(--info)"><i class="fas fa-truck-loading"></i></div><div class="kpi-content"><p>Today Purch.</p><div class="kpi-value-sm" id="todayPurchases">৳ 0</div></div></div>
+                        <div class="kpi-card"><div class="kpi-icon-sm" style="background:var(--primary)"><i class="fas fa-chart-line"></i></div><div class="kpi-content"><p>Today Profit</p><div class="kpi-value-sm" id="todayProfit">৳ 0</div></div></div>
+                        <div class="kpi-card"><div class="kpi-icon-sm" style="background:var(--secondary)"><i class="fas fa-exchange-alt"></i></div><div class="kpi-content"><p>Today Trans.</p><div class="kpi-value-sm" id="todayTransactions">0</div></div></div>
+                        <div class="kpi-card"><div class="kpi-icon-sm" style="background:var(--secondary)"><i class="fas fa-wallet"></i></div><div class="kpi-content"><p>Month Sales</p><div class="kpi-value-sm" id="monthSales">৳ 0</div></div></div>
+                        <div class="kpi-card"><div class="kpi-icon-sm" style="background:var(--warning)"><i class="fas fa-shopping-bag"></i></div><div class="kpi-content"><p>Month Purch.</p><div class="kpi-value-sm" id="monthPurchases">৳ 0</div></div></div>
+                        <div class="kpi-card"><div class="kpi-icon-sm" style="background:var(--info)"><i class="fas fa-coins"></i></div><div class="kpi-content"><p>Month Profit</p><div class="kpi-value-sm" id="monthProfit">৳ 0</div></div></div>
+                        <div class="kpi-card"><div class="kpi-icon-sm" style="background:var(--dark)"><i class="fas fa-list-check"></i></div><div class="kpi-content"><p>Month Trans.</p><div class="kpi-value-sm" id="monthTransactions">0</div></div></div>
+                    </div>
+                    
+                    <div class="chart-grid">
+                        <div class="chart-card">
+                            <div class="chart-header">
+                                <h3><i class="fas fa-chart-bar"></i> Sales vs Purchase Trend</h3>
+                                <select id="chartPeriod" class="form-control" style="width: auto;" onchange="loadChartsData()">
+                                    <option value="month">This Month</option>
+                                    <option value="7" selected>Last 7 Days</option>
+                                    <option value="30">Last 30 Days</option>
+                                </select>
+                            </div>
+                            <div class="chart-container"><canvas id="salesChart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-header">
+                                <h3><i class="fas fa-chart-pie"></i> Category Sales <span style="font-size:0.75rem; font-weight:500; color:#64748b; margin-left:6px;">(This Month)</span></h3>
+                            </div>
+                            <div class="chart-container"><canvas id="categoryChart"></canvas></div>
+                        </div>
+                    </div>
+
+                    <div class="chart-grid" style="margin-top: 1rem;">
+                        <div class="chart-card">
+                            <div class="chart-header"><h3><i class="fas fa-bolt"></i> Quick Actions</h3></div>
+                            <div class="action-buttons">
+                                <button class="btn-action qa-sale" onclick="openQuickSale()"><i class="fas fa-cart-plus"></i><span>Quick Sale</span></button>
+                                <button class="btn-action qa-purchase" onclick="openQuickPurchase()"><i class="fas fa-truck-loading"></i><span>Quick Purchase</span></button>
+                                <button class="btn-action qa-stock" onclick="switchAppView('inventory')"><i class="fas fa-boxes"></i><span>Stock</span></button>
+                                <button class="btn-action qa-report" onclick="switchAppView('reports')"><i class="fas fa-file-export"></i><span>Reports</span></button>
+                            </div>
+                        </div>
+
+                        <div class="chart-card">
+                            <div class="chart-header"><h3><i class="fas fa-hand-holding-usd"></i> Financial Debt (Receivables)</h3></div>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                                <div class="kpi-card" style="border-bottom: 4px solid var(--danger); width: 100%; align-items: start; padding: 15px;">
+                                    <div class="kpi-icon-sm" style="background:var(--danger)"><i class="fas fa-money-bill-wave"></i></div>
+                                    <div class="kpi-content" style="text-align: left;">
+                                        <p style="font-size: 0.7rem;">Total Outstanding</p>
+                                        <div class="kpi-value-sm" id="totalDues" style="font-size: 1.3rem;">৳ 0</div>
+                                    </div>
+                                </div>
+                                <div class="kpi-card" style="border-bottom: 4px solid var(--warning); width: 100%; align-items: start; padding: 15px;">
+                                    <div class="kpi-icon-sm" style="background:var(--warning)"><i class="fas fa-users"></i></div>
+                                    <div class="kpi-content" style="text-align: left;">
+                                        <p style="font-size: 0.7rem;">Active Creditors</p>
+                                        <div class="kpi-value-sm" id="creditedCount" style="font-size: 1.3rem;">0</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="chart-grid" style="margin-top: 1rem;">
+                        <div class="chart-card">
+                            <div class="chart-header">
+                                <h3><i class="fas fa-exclamation-triangle"></i> Low Stock Alerts</h3>
+                                <button class="btn btn-primary btn-sm" onclick="switchAppView('inventory')">Inventory</button>
+                            </div>
+                            <div id="lowStockListContainer"><div class="loading"><p style="padding:10px; color:#94a3b8;">Checking stock levels...</p></div></div>
+                        </div>
+
+                        <div class="chart-card">
+                            <div class="chart-header"><h3><i class="fas fa-crown"></i> Top Products (This Month)</h3></div>
+                            <div id="topProducts" class="top-products-grid">
+                                <p class="top-prod-loading" style="grid-column: 1 / -1; text-align: center; color:#94a3b8; padding: 15px;">Loading sales statistics...</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: WAREHOUSE INFO & ANALYTICS -->
+                <section id="view_warehouse_info" class="view-section" style="width: 100%; max-width: 100%; box-sizing: border-box;">
+                    <div class="page-header wh-page-header" style="margin-bottom: 1.25rem;">
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <span style="display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; background: #3b82f6; color: white; border-radius: 8px; font-size: 1.05rem; flex-shrink: 0; box-shadow: 0 3px 8px rgba(59, 130, 246, 0.25);">
+                                <i class="fas fa-warehouse"></i>
+                            </span>
+                            <div>
+                                <h1 style="font-size: 1.25rem; font-weight: 700; color: #1e293b; margin: 0; line-height: 1.3;">Warehouse Info & Analytics</h1>
+                                <p class="subtitle" style="margin: 3px 0 0; color: #64748b; font-size: 0.82rem;">Inventory valuation in cost price, stock levels, and category breakdown</p>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary wh-refresh-btn" onclick="loadWarehouseInfoData()" style="background: #3b82f6; border: none; border-radius: 8px; padding: 8px 16px; font-size: 0.85rem; font-weight: 700; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; box-shadow: 0 2px 6px rgba(59, 130, 246, 0.3);">
+                            <i class="fas fa-sync-alt"></i> Refresh Data
+                        </button>
+                    </div>
+
+                    <!-- Top Row: Total Summary on Left, 2x2 Warehouses on Right -->
+                    <div class="wh-analytics-row">
+                        <div id="totalWarehouseSummaryCard" style="min-width: 0;">
+                            <!-- Injected by shoppilot.js -->
+                        </div>
+                        <div id="whMergedCardsGrid" class="wh-cards-grid">
+                            <!-- Injected by shoppilot.js -->
+                        </div>
+                    </div>
+
+                    <!-- Bottom Row: 2 Analytics Charts Side-by-Side -->
+                    <div class="wh-charts-bottom-layout">
+                        <div class="wh-chart-card">
+                            <div class="wh-chart-header">
+                                <i class="fas fa-chart-bar" style="color: #3b82f6; font-size: 1.05rem;"></i>
+                                <h3>Stock Level by Category & Warehouse <span style="font-size:0.75rem; font-weight:700; color:#2563eb; background:#eff6ff; padding:2px 8px; border-radius:6px; margin-left:6px;">(৳ Value)</span></h3>
+                            </div>
+                            <div style="position: relative; height: 320px; width: 100%; min-width: 0; overflow: hidden;">
+                                <canvas id="whCategoryBarChart"></canvas>
+                            </div>
+                        </div>
+                        <div class="wh-chart-card">
+                            <div class="wh-chart-header">
+                                <i class="fas fa-chart-pie" style="color: #8b5cf6; font-size: 1.05rem;"></i>
+                                <h3>Warehouse Value Share</h3>
+                            </div>
+                            <div style="position: relative; height: 320px; width: 100%; min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                                <canvas id="whValueSharePieChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: INVENTORY -->
+                <section id="view_inventory" class="view-section" style="width: 100%; max-width: 100%; box-sizing: border-box;">
+                    <div class="page-header inv-page-header">
+                        <div>
+                            <h1><i class="fas fa-box-open" style="color: #4361ee;"></i> Inventory Stock Levels</h1>
+                            <p class="subtitle">Monitor real stock balance matrix across warehouses and manage stock transfers</p>
+                        </div>
+                        <div class="inv-header-actions">
+                            <button type="button" id="tabBtnInvMatrix" class="btn btn-primary btn-sm inv-action-btn" onclick="switchInvSubTab('matrix')">
+                                <i class="fas fa-th"></i> <span>Stock Balance Matrix</span>
+                            </button>
+                            <button type="button" id="tabBtnInvTransfers" class="btn btn-secondary btn-sm inv-action-btn" onclick="switchInvSubTab('transfers')">
+                                <i class="fas fa-exchange-alt"></i> <span>Transfer Stock & History</span>
+                            </button>
+                            <button type="button" class="btn btn-primary btn-sm inv-action-btn" onclick="loadInventoryData()">
+                                <i class="fas fa-sync-alt"></i> <span>Refresh Stock</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- TAB 1: STOCK MATRIX -->
+                    <div id="invSubTabMatrixArea">
+                        <div class="inventory-filter-bar">
+                            <div class="filter-item">
+                                <label><i class="fas fa-search"></i> Search Product</label>
+                                <input type="text" id="invSearchName" class="form-control" placeholder="Search name or ID..." onkeyup="handleInventoryFilters()">
+                            </div>
+                            <div class="filter-item">
+                                <label><i class="fas fa-tags"></i> Category</label>
+                                <select id="invFilterCategory" class="form-control" onchange="handleInventoryFilters()"></select>
+                            </div>
+                            <div class="filter-item">
+                                <label><i class="fas fa-copyright"></i> Brand</label>
+                                <select id="invFilterBrand" class="form-control" onchange="handleInventoryFilters()"></select>
+                            </div>
+                            <div class="filter-item">
+                                <label>&nbsp;</label>
+                                <button class="btn btn-secondary" onclick="resetInvFilters()" style="height: 42px; width: 100%;"><i class="fas fa-undo"></i></button>
+                            </div>
+                        </div>
+
+                        <div class="chart-card">
+                            <div class="table-responsive">
+                                <table class="custom-table">
+                                    <thead id="inventoryTableHead"></thead>
+                                    <tbody id="inventoryTableBody"><tr><td colspan="10" class="text-center">Loading stock data...</td></tr></tbody>
+                                </table>
+                            </div>
+                            <div class="pagination-footer" style="display: flex; justify-content: space-between; align-items: center; padding: 14px 22px; border-top: 1px solid var(--border-color, #e2e8f0);">
+                                <div class="pagination-info" style="font-size: 0.85rem; color: var(--text-muted, #64748b);">
+                                    Showing <span id="invStartRange" style="font-weight: 700; color: var(--text-heading, #0f172a);">0</span> to <span id="invEndRange" style="font-weight: 700; color: var(--text-heading, #0f172a);">0</span> of <span id="invTotalItems" style="font-weight: 700; color: var(--text-heading, #0f172a);">0</span> products (Page <span id="invCurrentPage">1</span> of <span id="invTotalPages">1</span>)
+                                </div>
+                                <div class="pagination-buttons" style="display: flex; gap: 8px; align-items: center;">
+                                    <button type="button" class="btn btn-secondary btn-sm" id="invPrevBtn" onclick="changeInventoryPage(-1)" disabled style="padding: 6px 14px; border-radius: 6px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
+                                        <i class="fas fa-chevron-left"></i> Previous
+                                    </button>
+                                    <button type="button" class="btn btn-secondary btn-sm" id="invNextBtn" onclick="changeInventoryPage(1)" disabled style="padding: 6px 14px; border-radius: 6px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
+                                        Next <i class="fas fa-chevron-right"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB 2: TRANSFER STOCK & HISTORY -->
+                    <div id="invSubTabTransfersArea" style="display: none;">
+                        <!-- Transfer Notification Banner -->
+                        <div id="invTrfBannerMsg" style="display: none;"></div>
+
+                        <!-- In-Page Transfer Form Card -->
+                        <div class="chart-card trf-form-card" style="margin-bottom: 24px; padding: 22px 26px;">
+                            <h3 class="trf-card-title">
+                                <i class="fas fa-exchange-alt" style="color: #10b981;"></i> New Warehouse Stock Transfer
+                            </h3>
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px;">
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label class="trf-field-label">Source Warehouse</label>
+                                    <select id="page_trf_source" class="form-control" onchange="onPageTrfSourceChange()"></select>
+                                </div>
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label class="trf-field-label">Destination Warehouse</label>
+                                    <select id="page_trf_dest" class="form-control"></select>
+                                </div>
+                                <div class="form-group" style="margin-bottom: 0; position: relative;">
+                                    <label class="trf-field-label">Select Product</label>
+                                    <input type="text" id="page_trf_search_input" class="form-control" placeholder="Select source warehouse first..." disabled onfocus="pageTrfShowDropdown()" oninput="pageTrfFilterProducts(this.value)">
+                                    <div id="page_trf_dropdown" class="trf-search-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 1050; max-height: 220px; overflow-y: auto;"></div>
+                                    <input type="hidden" id="page_trf_product_id">
+                                    <input type="hidden" id="page_trf_batch_no">
+                                </div>
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label class="trf-field-label">Available Stock</label>
+                                    <input type="number" id="page_trf_available" class="form-control trf-avail-input" readonly placeholder="0">
+                                </div>
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label class="trf-field-label">Transfer Qty</label>
+                                    <input type="number" id="page_trf_qty" class="form-control" min="1" placeholder="Quantity">
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 14px; align-items: flex-end; margin-top: 14px; flex-wrap: wrap;">
+                                <div class="form-group" style="flex: 1; min-width: 260px; margin-bottom: 0;">
+                                    <label class="trf-field-label">Note / Reason</label>
+                                    <input type="text" id="page_trf_note" class="form-control" placeholder="Optional transfer reason or dispatch reference...">
+                                </div>
+                                <button type="button" class="btn btn-success" id="btnPageExecuteTransfer" onclick="executePageTransfer()" style="padding: 10px 24px; font-weight: 700; border-radius: 8px; display: inline-flex; align-items: center; gap: 8px; height: 42px;">
+                                    <i class="fas fa-check-circle"></i> Execute Stock Transfer
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Recent Stock Transfers Table Card -->
+                        <div class="chart-card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                <h3 class="trf-card-title" style="margin: 0;">
+                                    <i class="fas fa-history" style="color: #4361ee;"></i> Stock Transfer History
+                                </h3>
+                                <button class="btn btn-secondary btn-sm" onclick="loadRecentTransfersList()"><i class="fas fa-sync-alt"></i> Refresh History</button>
+                            </div>
+                            <div class="table-responsive">
+                                <table class="custom-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Ref ID</th>
+                                            <th>Date & Time</th>
+                                            <th>Product Name</th>
+                                            <th>Batch</th>
+                                            <th style="text-align: center;">Transferred Qty</th>
+                                            <th>From Warehouse</th>
+                                            <th>To Warehouse</th>
+                                            <th>Note</th>
+                                            <th style="text-align: center;">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="transferHistoryTableBody">
+                                        <tr><td colspan="9" class="text-center" style="padding: 20px;">Loading transfer history...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: PRODUCTS -->
+                <section id="view_products" class="view-section">
+                    <div class="page-header">
+                        <div>
+                            <h1><i class="fas fa-boxes" style="color: #4361ee;"></i> Product Catalog</h1>
+                            <p class="subtitle">Manage master products, carton units, and pricing</p>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                            <button class="btn btn-secondary" onclick="openPrintAllBarcodesModal()" title="Print All Barcodes (Compact Sticker Sheets)" style="display:inline-flex; align-items:center; gap:6px; background: #eef2ff; color: #4361ee; border-color: #c7d2fe; font-weight:700;">
+                                <i class="fas fa-print"></i> Print All Barcodes
+                            </button>
+                            <button class="btn btn-primary" onclick="openProductModal()"><i class="fas fa-plus"></i> Add Product</button>
+                            <button class="btn btn-secondary" onclick="loadProductsData()" title="Refresh Product List"><i class="fas fa-sync-alt"></i> Refresh</button>
+                        </div>
+                    </div>
+
+                    <!-- Products Filter Bar -->
+                    <div class="inventory-filter-bar">
+                        <div class="filter-item">
+                            <label><i class="fas fa-search"></i> Search Product</label>
+                            <input type="text" id="productSearchInput" class="form-control" placeholder="Search product name or ID..." onkeyup="handleProductSearch()">
+                        </div>
+                        <div class="filter-item">
+                            <label><i class="fas fa-tags"></i> Category</label>
+                            <select id="productFilterCategory" class="form-control" onchange="handleProductSearch()">
+                                <option value="">All Categories</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label><i class="fas fa-copyright"></i> Brand</label>
+                            <select id="productFilterBrand" class="form-control" onchange="handleProductSearch()">
+                                <option value="">All Brands</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>&nbsp;</label>
+                            <button class="btn btn-secondary" onclick="resetProductFilters()" style="height: 42px; width: 100%;" title="Reset Filters"><i class="fas fa-undo"></i></button>
+                        </div>
+                    </div>
+
+                    <div class="chart-card">
+                        <div class="table-responsive">
+                            <table class="custom-table">
+                                <thead>
+                                    <tr><th>ID</th><th>Barcode</th><th>Product Name</th><th>Category</th><th>Brand</th><th>UPC</th><th>Stock</th><th>Unit Price</th><th>Sale Price</th><th>MRP</th><th>Status</th><th>Actions</th></tr>
+                                </thead>
+                                <tbody id="productTableBody"><tr><td colspan="12" class="text-center">Loading products...</td></tr></tbody>
+                            </table>
+                        </div>
+                        <div class="pagination-footer" style="display: flex; justify-content: space-between; align-items: center; padding: 15px 25px; border-top: 1px solid #f1f5f9;">
+                            <div class="pagination-info">Showing <span id="prodStartRange">0</span> to <span id="prodEndRange">0</span> of <span id="prodTotalItems">0</span> products</div>
+                            <div class="pagination-buttons">
+                                <button class="btn btn-secondary btn-sm" id="prodPrevBtn" onclick="changeProdPage(-1)" disabled><i class="fas fa-chevron-left"></i></button>
+                                <button class="btn btn-secondary btn-sm" id="prodNextBtn" onclick="changeProdPage(1)" disabled><i class="fas fa-chevron-right"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: SALES (POS) -->
+                <section id="view_sales" class="view-section">
+                    <!-- Top Bar matching Image 1 & 2 -->
+                    <div class="pos-top-bar-exact">
+                        <div class="pos-top-item pos-memo-wrap">
+                            <input type="text" id="posMemoNo" class="form-control pos-input-clean" placeholder="Memo No...">
+                        </div>
+                        <div class="pos-top-item pos-date-wrap">
+                            <input type="date" id="posSaleDate" class="form-control pos-input-clean">
+                        </div>
+                        <div class="pos-top-item pos-cust-wrap">
+                            <div class="pos-cust-inline-group">
+                                <input type="text" id="posCustomerInput" class="form-control pos-input-clean" list="customerListOptions" placeholder="Customer" value="WALK-IN">
+                                <datalist id="customerListOptions"></datalist>
+                                <button type="button" class="btn-cust-plus" onclick="switchAppView('customers')" title="Add New Customer">+</button>
+                            </div>
+                        </div>
+                        <div class="pos-top-item pos-search-wrap" style="position: relative;">
+                            <div class="pos-search-inner">
+                                <input type="text" id="posProductSearch" class="form-control pos-input-clean pos-search-field" 
+                                       placeholder="Type Product Name or Scan..." 
+                                       autocomplete="off"
+                                       onfocus="openPosProductDropdown()" 
+                                       onclick="openPosProductDropdown()"
+                                       oninput="filterPosProductDropdown(this.value)" 
+                                       onkeydown="handlePosProductKeydown(event)">
+                                <i class="fas fa-caret-down pos-search-arrow" onclick="togglePosProductDropdown(event)"></i>
+                            </div>
+                            <!-- Dark Floating Product Dropdown (Image 1) -->
+                            <div id="posProductDropdown" class="pos-dark-dropdown" style="display: none;"></div>
+                        </div>
+                        <div class="pos-top-item pos-barcode-wrap">
+                            <button type="button" class="btn-pos-barcode" id="posBarcodeBtn" onclick="togglePosBarcodeScanner()" title="Scan Barcode (Camera / USB Scanner)">
+                                <i class="fas fa-barcode"></i>
+                                <span>Barcode</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- CAMERA BARCODE SCANNER PANEL FOR SALES (POS) -->
+                    <div id="pos_camera_scanner_panel" class="qs-scanner-panel pos-scanner-panel" style="display:none; margin-bottom:16px;">
+                        <div class="qs-scanner-header">
+                            <div class="qs-scanner-title">
+                                <span class="qs-scanner-dot"></span>
+                                <i class="fas fa-barcode" style="color: #60a5fa;"></i>
+                                <span>POS Barcode Scanner</span>
+                            </div>
+                            <div class="qs-scanner-tools">
+                                <select id="pos_camera_select" class="qs-cam-select" onchange="switchPosCamera(this.value)" style="display:none;"></select>
+                                <button type="button" class="qs-tool-btn" id="pos_scanner_torch_btn" onclick="togglePosTorch()" title="Toggle Flashlight" style="display:none;">
+                                    <i class="far fa-lightbulb" id="pos_torch_icon"></i>
+                                </button>
+                                <button type="button" class="qs-tool-btn active" id="pos_continuous_btn" onclick="togglePosContinuousScan()" title="Continuous Scan Mode">
+                                    <i class="fas fa-sync-alt"></i>
+                                </button>
+                                <button type="button" class="qs-tool-btn qs-tool-close" onclick="closePosBarcodeScanner()" title="Close Scanner">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Video Viewfinder with Targeting HUD -->
+                        <div class="qs-scanner-viewport-wrap">
+                            <div id="pos_reader" class="qs-scanner-reader"></div>
+                            
+                            <!-- Optical Reticle Overlay -->
+                            <div class="qs-scanner-overlay">
+                                <div class="qs-target-frame">
+                                    <div class="qs-corner tl"></div>
+                                    <div class="qs-corner tr"></div>
+                                    <div class="qs-corner bl"></div>
+                                    <div class="qs-corner br"></div>
+                                    <div class="qs-scanner-laser" id="pos_scanner_laser"></div>
+                                </div>
+                            </div>
+
+                            <!-- Real-time Scan Toast / Feedback -->
+                            <div id="pos_scanner_toast" class="qs-scanner-toast" style="display:none;"></div>
+                        </div>
+
+                        <!-- Status bar -->
+                        <div class="qs-scanner-status-bar">
+                            <div id="pos_scanner_status_text" class="qs-status-text">
+                                <i class="fas fa-qrcode" style="margin-right:4px;"></i> Point camera at product barcode or scan with USB scanner
+                            </div>
+                        </div>
+
+                        <!-- Camera Error / Help fallback -->
+                        <div id="pos_scanner_error_box" class="qs-scanner-error" style="display:none;"></div>
+
+                        <!-- Manual barcode input & Quick test chips -->
+                        <div class="qs-manual-bar">
+                            <div class="qs-manual-input-group">
+                                <i class="fas fa-keyboard" style="color: #94a3b8; font-size: 0.85rem;"></i>
+                                <input type="text" id="pos_manual_barcode_input" placeholder="Type barcode (e.g. 8901234018)..." onkeydown="if(event.key==='Enter') scanPosBarcodeManually()">
+                                <button type="button" class="btn-qs-manual-add" onclick="scanPosBarcodeManually()">Add to Cart</button>
+                            </div>
+                            <div class="qs-test-barcodes">
+                                <span class="qs-test-label">Quick Test:</span>
+                                <button type="button" class="qs-test-chip" onclick="testPosScanBarcode('8901234018')" title="Amba Olive 250ml (8901234018)">Amba 250ml</button>
+                                <button type="button" class="qs-test-chip" onclick="testPosScanBarcode('8901234010')" title="Sesa 100ml (8901234010)">Sesa 100ml</button>
+                                <button type="button" class="qs-test-chip" onclick="testPosScanBarcode('8901234003')" title="Kali Mehedi (8901234003)">Kali Mehedi</button>
+                                <button type="button" class="qs-test-chip" onclick="testPosScanBarcode('8901234004')" title="Super Vasmol (8901234004)">Vasmol 100ml</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Main Sales Container: Left Cart + Right Checkout -->
+                    <div class="pos-main-grid">
+                        <div class="pos-cart-card">
+                            <div class="table-responsive">
+                                <table class="pos-cart-table-exact">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 38%;">ITEM & WAREHOUSE</th>
+                                            <th style="width: 15%;">STK</th>
+                                            <th style="width: 13%;">PRICE</th>
+                                            <th style="width: 18%;">QTY</th>
+                                            <th style="width: 8%;"><span style="color: #16a34a;"><i class="fas fa-gift"></i> FREE</span></th>
+                                            <th style="width: 8%; text-align: right;">TOTAL</th>
+                                            <th style="width: 2%;"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="posCartTableBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="checkout-panel-exact">
+                            <h3 class="checkout-title">Checkout</h3>
+                            
+                            <div class="checkout-row">
+                                <span class="checkout-label">Subtotal</span>
+                                <span class="checkout-val" id="posTxtSubtotal">৳ 0</span>
+                            </div>
+
+                            <div class="checkout-row checkout-discount-row">
+                                <span class="checkout-label">Discount</span>
+                                <div class="discount-input-group">
+                                    <input type="number" id="posInpDisc" value="0" min="0" class="disc-num-input" oninput="recalculatePos()">
+                                    <select id="posTypDisc" onchange="recalculatePos()" class="disc-type-select">
+                                        <option value="val">৳</option>
+                                        <option value="per">%</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Big Blue Grand Total Display Box -->
+                            <div class="grand-total-box-exact" id="posTxtGrandTotal">0</div>
+
+                            <div class="checkout-paymode-wrap">
+                                <label class="paymode-label">Payment Mode</label>
+                                <select id="posPayMode" class="form-control paymode-select">
+                                    <option value="Cash" selected>Cash</option>
+                                    <option value="Credit (Due)">Credit (Due)</option>
+                                    <option value="Bank">Bank</option>
+                                    <option value="Bkash">Bkash</option>
+                                </select>
+                            </div>
+
+                            <button type="button" class="btn-complete-sale" id="posBtnPay" onclick="submitPosSale()">
+                                <i class="fas fa-check-circle"></i> <span>Complete Sale</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Top Selling SKUs (Quick Sale Pickup) & Recent Sales History Card -->
+                    <div class="recent-sales-card" style="margin-top: 1.5rem;">
+                        <div class="recent-sales-tab-header" style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <button type="button" id="tabBtnTopSkus" onclick="switchPosBottomTab('topSkus')" class="btn-tab-pill active" style="display: flex; align-items: center; gap: 6px; padding: 7px 16px; border-radius: 20px; font-weight: 700; font-size: 0.85rem; cursor: pointer; transition: all 0.2s;">
+                                    <i class="fas fa-fire" style="color: #f59e0b;"></i> Top Selling SKUs (Quick Pickup)
+                                </button>
+                                <button type="button" id="tabBtnRecentSales" onclick="switchPosBottomTab('recentSales')" class="btn-tab-pill" style="display: flex; align-items: center; gap: 6px; padding: 7px 16px; border-radius: 20px; font-weight: 600; font-size: 0.85rem; cursor: pointer; transition: all 0.2s;">
+                                    <i class="fas fa-history" style="color: #64748b;"></i> Recent Sales History
+                                </button>
+                            </div>
+                            <div id="topSkusHeaderInfo" style="display: flex; align-items: center; gap: 10px;">
+                                <span style="background: #eef2ff; color: #4361ee; font-size: 0.76rem; padding: 4px 10px; border-radius: 12px; font-weight: 600;">
+                                    ⚡ Click any SKU to add to cart
+                                </span>
+                                <button type="button" onclick="loadPosTopSellingSkus()" class="btn btn-sm btn-secondary" style="height: 30px; padding: 0 10px; font-size: 0.75rem;" title="Refresh Top SKUs">
+                                    <i class="fas fa-sync-alt"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- TAB CONTENT: TOP SELLING SKUS -->
+                        <div id="posTopSkusContent">
+                            <div id="posTopSkusGrid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px;">
+                                <div style="grid-column: 1 / -1; text-align: center; padding: 20px; color: #64748b;">
+                                    <i class="fas fa-spinner fa-spin"></i> Loading Top Selling SKUs...
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- TAB CONTENT: RECENT SALES HISTORY -->
+                        <div id="posRecentSalesContent" style="display: none;">
+                            <div class="table-responsive">
+                                <table class="recent-sales-table-exact">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>DATE</th>
+                                            <th>CUSTOMER</th>
+                                            <th>RETURN AMT</th>
+                                            <th>AMOUNT</th>
+                                            <th>PAYMENT</th>
+                                            <th style="text-align: center;">ACTION</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="posRecentSalesBody"></tbody>
+                                </table>
+                            </div>
+                            <div class="pagination-footer" style="display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-top: 1px solid var(--border-color, #e2e8f0); margin-top: 10px;">
+                                <div class="pagination-info" style="font-size: 0.85rem; color: var(--text-muted, #64748b);">
+                                    Showing <span id="recentSalesStartRange" style="font-weight: 700; color: var(--text-heading, #0f172a);">0</span> to <span id="recentSalesEndRange" style="font-weight: 700; color: var(--text-heading, #0f172a);">0</span> of <span id="recentSalesTotalItems" style="font-weight: 700; color: var(--text-heading, #0f172a);">0</span> sales (Page <span id="recentSalesCurrentPage">1</span> of <span id="recentSalesTotalPages">1</span>)
+                                </div>
+                                <div class="pagination-buttons" style="display: flex; gap: 8px; align-items: center;">
+                                    <button type="button" class="btn btn-secondary btn-sm" id="recentSalesPrevBtn" onclick="changePosRecentSalesPage(-1)" disabled style="padding: 6px 14px; border-radius: 6px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
+                                        <i class="fas fa-chevron-left"></i> Previous
+                                    </button>
+                                    <button type="button" class="btn btn-secondary btn-sm" id="recentSalesNextBtn" onclick="changePosRecentSalesPage(1)" disabled style="padding: 6px 14px; border-radius: 6px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
+                                        Next <i class="fas fa-chevron-right"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: PURCHASES -->
+                <section id="view_purchases" class="view-section">
+                    <div class="page-header">
+                        <div>
+                            <h1><i class="fas fa-history"></i> Purchase Inbound</h1>
+                            <p class="subtitle">Record supplier procurements and new batch arrivals</p>
+                        </div>
+                        <button type="button" class="btn btn-primary" onclick="openMultiPurchaseModal()"><i class="fas fa-plus"></i> New Purchase</button>
+                    </div>
+
+                    <!-- PURCHASE HISTORY SECTION -->
+                    <div class="chart-card">
+                        <div class="chart-header purch-history-header">
+                            <div class="purch-history-title-wrap">
+                                <h3 class="purch-history-title"><i class="fas fa-history" style="color: #4361ee;"></i> Purchase Inbound History</h3>
+                                <p class="purch-history-subtitle">All previous supplier purchase receipts and warehouse logs</p>
+                            </div>
+                            <div class="purch-history-search-wrap">
+                                <i class="fas fa-search purch-history-search-icon"></i>
+                                <input type="text" id="purchHistorySearch" class="form-control purch-history-search-input" placeholder="Search by ID, supplier, product..." oninput="filterPurchasesHistory(this.value)">
+                            </div>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="custom-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Purchase ID</th>
+                                        <th>Supplier</th>
+                                        <th>Product Code</th>
+                                        <th>Product Name</th>
+                                        <th>Batch</th>
+                                        <th>Return Qty</th>
+                                        <th>Qty</th>
+                                        <th>Cost</th>
+                                        <th>Sale</th>
+                                        <th>MRP</th>
+                                        <th>Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="purchaseTableBody">
+                                    <tr><td colspan="12" class="text-center">Loading purchases...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="pagination-bar" style="display:flex; justify-content:space-between; align-items:center; padding:12px 5px; margin-top:10px;">
+                            <span id="purchPaginationInfo" style="font-size:0.85rem; color:#64748b;">Showing records</span>
+                            <div style="display:flex; gap:6px;">
+                                <button type="button" class="btn btn-secondary btn-sm" onclick="changePurchPage(-1)"><i class="fas fa-chevron-left"></i> Prev</button>
+                                <button type="button" class="btn btn-secondary btn-sm" onclick="changePurchPage(1)">Next <i class="fas fa-chevron-right"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: SALES RETURNS -->
+                <section id="view_returns" class="view-section">
+                    <div class="page-header">
+                        <div>
+                            <h1><i class="fas fa-undo-alt" style="color: #4361ee;"></i> Sales Returns</h1>
+                            <p class="subtitle">Return sold items back to stock and reconcile customer dues</p>
+                        </div>
+                    </div>
+                    <div class="chart-card sales-ret-search-card" style="padding: 25px; text-align: center; margin-bottom: 25px;">
+                        <label class="sales-ret-label" style="display:block; margin-bottom:10px; font-weight:700;">Enter Sales Invoice Number</label>
+                        <div style="display:flex; gap:10px; max-width:500px; margin:0 auto;">
+                            <input type="text" id="invSearchInput" class="form-control" placeholder="e.g. INV-2026-0001" onkeydown="if(event.key==='Enter') fetchSalesInvoiceForReturn();">
+                            <button class="btn btn-primary" id="btnSearchSalesReturn" onclick="fetchSalesInvoiceForReturn()"><i class="fas fa-search"></i> Search</button>
+                        </div>
+                    </div>
+
+                    <!-- SALES RETURN DETAILS AREA -->
+                    <div id="invoiceReturnResultArea" style="display:none;">
+                        <!-- Return confirmation notification banner -->
+                        <div id="salesRetBannerMsg" style="display: none;"></div>
+
+                        <!-- 3-Column Header Strip (CUSTOMER, DATE, INVOICE/STATUS) -->
+                        <div class="sales-ret-header-strip">
+                            <div>
+                                <span class="sales-ret-strip-label">CUSTOMER</span>
+                                <p id="retDispCust" class="sales-ret-strip-val">-</p>
+                            </div>
+                            <div>
+                                <span class="sales-ret-strip-label">DATE</span>
+                                <p id="retDispDate" class="sales-ret-strip-val">-</p>
+                            </div>
+                            <div>
+                                <span class="sales-ret-strip-label">INVOICE STATUS</span>
+                                <p id="retDispStatus" class="sales-ret-strip-status">Completed</p>
+                            </div>
+                        </div>
+
+                        <!-- Items list with returned pcs info & return controls -->
+                        <div id="salesReturnItemList" style="display: flex; flex-direction: column; gap: 14px;"></div>
+
+                        <!-- Total Refund / Dues Summary & Bulk Return Button -->
+                        <div class="sales-ret-summary-card">
+                            <div>
+                                <span class="sales-ret-summary-label">Total Calculated Refund:</span>
+                                <div class="sales-ret-summary-val" id="retTotalRefundText">৳ 0.00</div>
+                            </div>
+                            <button class="btn btn-danger btn-sales-ret-bulk" id="btnSubmitBulkSalesReturn" onclick="submitInvoiceSalesReturn()">
+                                <i class="fas fa-undo-alt"></i> Process All Returns
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: PURCHASE RETURNS -->
+                <section id="view_purchase_returns" class="view-section">
+                    <div class="page-header">
+                        <div>
+                            <h1><i class="fas fa-truck-loading" style="color: #4361ee;"></i> Purchase Returns</h1>
+                            <p class="subtitle">Return defective or expired inventory to suppliers</p>
+                        </div>
+                    </div>
+                    <div class="chart-card purch-ret-search-card" style="padding: 25px; text-align: center; margin-bottom: 25px;">
+                        <label class="purch-ret-label" style="display:block; margin-bottom:10px; font-weight:700;">Enter Purchase ID</label>
+                        <div style="display:flex; gap:10px; max-width:500px; margin:0 auto;">
+                            <input type="text" id="purchRetSearchInput" class="form-control" placeholder="e.g. PU0002" onkeydown="if(event.key==='Enter') fetchPurchaseForReturn();">
+                            <button class="btn btn-primary" id="btnSearchPurchReturn" onclick="fetchPurchaseForReturn()"><i class="fas fa-search"></i> Search</button>
+                        </div>
+                    </div>
+
+                    <!-- PURCHASE RETURN DETAILS AREA (RENDERED ON SEARCH) -->
+                    <div id="purchaseReturnResultArea" style="display: none;">
+                        <!-- Last return alert banner -->
+                        <div id="purchRetBannerMsg" style="display: none;"></div>
+
+                        <!-- 3-Column Header Strip (Matching Screenshot: SUPPLIER, DATE, STATUS) -->
+                        <div class="purch-ret-header-strip">
+                            <div>
+                                <span class="purch-ret-strip-label">SUPPLIER</span>
+                                <p id="purchRetDispSupplier" class="purch-ret-strip-val">-</p>
+                            </div>
+                            <div>
+                                <span class="purch-ret-strip-label">DATE</span>
+                                <p id="purchRetDispDate" class="purch-ret-strip-val">-</p>
+                            </div>
+                            <div>
+                                <span class="purch-ret-strip-label">STATUS</span>
+                                <p id="purchRetDispStatus" class="purch-ret-strip-status">In Stock</p>
+                            </div>
+                        </div>
+
+                        <!-- Product Return Items List (Matching Screenshot Item Cards) -->
+                        <div id="purchaseReturnItemList" style="display: flex; flex-direction: column; gap: 14px;"></div>
+                    </div>
+                </section>
+
+                <!-- VIEW: CUSTOMERS -->
+                <section id="view_customers" class="view-section" style="width: 100%; max-width: 100%; box-sizing: border-box;">
+                    <div class="page-header customer-page-header">
+                        <div>
+                            <h1><i class="fas fa-users"></i> Customer Management</h1>
+                            <p class="subtitle">Client dues, contact books, and bulk payments</p>
+                        </div>
+                        <div class="customer-header-actions">
+                            <div class="customer-search-wrap">
+                                <i class="fas fa-search customer-search-icon"></i>
+                                <input type="text" id="customerSearchInput" class="form-control customer-search-input" placeholder="Search customer..." oninput="handleCustomerSearch()">
+                            </div>
+                            <button class="btn btn-primary btn-add-customer" onclick="openCustomerModal()"><i class="fas fa-user-plus"></i> <span>Add Customer</span></button>
+                        </div>
+                    </div>
+                    <div class="stats-grid customer-stats-grid" id="customerStatsGrid">
+                        <div class="stat-card customer-stat-card customer-card-total" onclick="filterCustomersByType('')" title="Click to show all customers">
+                            <div class="customer-card-header-row">
+                                <div class="customer-card-label">
+                                    <i class="fas fa-users customer-card-icon-blue"></i>
+                                    <span>Total Customers</span>
+                                </div>
+                            </div>
+                            <div class="stat-value customer-stat-value" id="totalCustomersCount">0</div>
+                        </div>
+                        <div class="stat-card customer-stat-card customer-card-dues">
+                            <div class="customer-card-header-row">
+                                <div class="customer-card-label">
+                                    <i class="fas fa-file-invoice-dollar customer-card-icon-red"></i>
+                                    <span>Total Outstanding Dues</span>
+                                </div>
+                            </div>
+                            <div class="stat-value customer-stat-value customer-stat-dues-value" id="totalOutstandingDues">৳ 0.00</div>
+                        </div>
+                        <div id="customerTypeDuesCardsContainer" style="display: contents;"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>ID</th><th>Name</th><th>Customer Type</th><th>Phone</th><th>Address</th><th>Current Due</th><th>Actions</th></tr></thead>
+                                <tbody id="customerTableBody"><tr><td colspan="7" class="text-center">Loading customers...</td></tr></tbody>
+                            </table>
+                        </div>
+                        <div class="pagination-footer" style="display: flex; justify-content: space-between; align-items: center; padding: 14px 22px; border-top: 1px solid var(--border-color, #e2e8f0);">
+                            <div class="pagination-info" style="font-size: 0.85rem; color: var(--text-muted, #64748b);">
+                                Showing <span id="custStartRange" style="font-weight: 700; color: var(--text-heading, #0f172a);">0</span> to <span id="custEndRange" style="font-weight: 700; color: var(--text-heading, #0f172a);">0</span> of <span id="custTotalItems" style="font-weight: 700; color: var(--text-heading, #0f172a);">0</span> customers (Page <span id="custCurrentPage">1</span> of <span id="custTotalPages">1</span>)
+                            </div>
+                            <div class="pagination-buttons" style="display: flex; gap: 8px; align-items: center;">
+                                <button type="button" class="btn btn-secondary btn-sm" id="custPrevBtn" onclick="changeCustomerPage(-1)" disabled style="padding: 6px 14px; border-radius: 6px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
+                                    <i class="fas fa-chevron-left"></i> Previous
+                                </button>
+                                <button type="button" class="btn btn-secondary btn-sm" id="custNextBtn" onclick="changeCustomerPage(1)" disabled style="padding: 6px 14px; border-radius: 6px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
+                                    Next <i class="fas fa-chevron-right"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: SUPPLIERS -->
+                <section id="view_suppliers" class="view-section">
+                    <div class="page-header">
+                        <div>
+                            <h1><i class="fas fa-truck-loading"></i> Supplier Management</h1>
+                            <p class="subtitle">Procurement vendors and contact details</p>
+                        </div>
+                        <button class="btn btn-primary" onclick="openSupplierModal()"><i class="fas fa-plus"></i> Add Supplier</button>
+                    </div>
+                    <div class="chart-card">
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>ID</th><th>Supplier Name</th><th>Contact Person</th><th>Phone</th><th>Actions</th></tr></thead>
+                                <tbody id="supplierTableBody"><tr><td colspan="5" class="text-center">Loading suppliers...</td></tr></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: CASH BOOK / DEPOSITS -->
+                <section id="view_deposits" class="view-section">
+                    <div class="page-header">
+                        <div>
+                            <h1><i class="fas fa-money-check-alt" style="color: #10b981;"></i> Cash Settlement & Deposits</h1>
+                            <p class="subtitle">Deposit collected customer cash to bank accounts or operational expenses</p>
+                        </div>
+                        <button class="btn btn-primary" onclick="loadDepositsView()"><i class="fas fa-sync-alt"></i> Refresh Balance</button>
+                    </div>
+
+                    <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+                        <div class="stat-card"><div style="color:#64748b; font-size:0.75rem; font-weight:800;">Opening Cash</div><div class="stat-value" id="cash_opening_val" style="color:#6366f1;">৳ 0</div></div>
+                        <div class="stat-card"><div style="color:#64748b; font-size:0.75rem; font-weight:800;">Cash in Hand</div><div class="stat-value" id="cash_in_hand_val" style="color:#10b981;">৳ 0</div></div>
+                        <div class="stat-card"><div style="color:#64748b; font-size:0.75rem; font-weight:800;">Total Collection</div><div class="stat-value" id="cash_total_collected_val" style="color:#4361ee;">৳ 0</div></div>
+                        <div class="stat-card"><div style="color:#64748b; font-size:0.75rem; font-weight:800;">Deposited to Banks</div><div class="stat-value" id="cash_total_banked_val" style="color:#0284c7;">৳ 0</div></div>
+                        <div class="stat-card"><div style="color:#64748b; font-size:0.75rem; font-weight:800;">Expenses Disbursed</div><div class="stat-value" id="cash_total_expenses_val" style="color:#f59e0b;">৳ 0</div></div>
+                    </div>
+
+                    <div class="chart-card" style="margin-bottom: 25px; padding: 20px;">
+                        <h3 style="font-size: 1.05rem; font-weight: 800; margin-bottom: 15px;"><i class="fas fa-plus-circle"></i> New Deposit Entry</h3>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: end;">
+                            <div class="form-group"><label>Date</label><input type="date" id="dep_date" class="form-control"></div>
+                            <div class="form-group"><label>Deposit To</label><select id="dep_type" class="form-control" onchange="updateDepositDestinations()"><option value="Bank Deposit" selected>Bank Deposit</option><option value="Expense / Other">Operating Expense</option></select></div>
+                            <div class="form-group"><label>Destination Bank/Expense</label><select id="dep_destination" class="form-control"></select></div>
+                            <div class="form-group"><label>Slip / Voucher No</label><input type="text" id="dep_slip_no" class="form-control"></div>
+                            <div class="form-group"><label>Amount (৳)</label><input type="number" id="dep_amount" class="form-control" placeholder="0.00"></div>
+                        </div>
+                        <div style="display: flex; gap: 12px; margin-top: 10px;">
+                            <input type="text" id="dep_note" class="form-control" placeholder="Narration / Note..." style="flex:1;">
+                            <button type="button" class="btn btn-success" onclick="submitDepositEntry()"><i class="fas fa-save"></i> Save Deposit</button>
+                        </div>
+                    </div>
+
+                    <div class="chart-card">
+                        <div class="chart-header"><h3><i class="fas fa-history"></i> Deposit History</h3></div>
+                        <div class="table-responsive">
+                            <table class="custom-table">
+                                <thead><tr><th>Date</th><th>ID</th><th>Type</th><th>Destination</th><th>Slip No</th><th>Amount</th><th>Note</th><th>Recorded By</th><th>Action</th></tr></thead>
+                                <tbody id="depositsHistoryTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: REPORTS -->
+                <section id="view_reports" class="view-section">
+                    <div class="page-header">
+                        <div>
+                            <h1><i class="fas fa-file-invoice-dollar"></i> Analytical Reports</h1>
+                            <p class="subtitle">Export financial ledgers, stock audits, and aging sheets</p>
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            <button class="btn btn-success" onclick="exportTableToExcel()"><i class="fas fa-file-excel"></i> Export Excel</button>
+                            <button class="btn btn-primary" onclick="window.print()"><i class="fas fa-print"></i> Print</button>
+                        </div>
+                    </div>
+                    <div class="report-filters">
+                        <div class="form-group"><label>Start Date</label><input type="date" id="rptStartDate" class="form-control" onchange="onReportTypeChange()"></div>
+                        <div class="form-group"><label>End Date</label><input type="date" id="rptEndDate" class="form-control" onchange="onReportTypeChange()"></div>
+                        <div class="form-group">
+                            <label>Report Type</label>
+                            <select id="rptTypeSelect" class="form-control" onchange="onReportTypeChange()">
+                                <option value="category_brand_sales" selected>Category & Brand Wise Sales Report</option>
+                                <option value="sales_detailed">Sales Register (Detailed Invoices & Items)</option>
+                                <option value="daily_sales">Daily Sales Summary Report</option>
+                                <option value="stock">Current Stock Report</option>
+                                <option value="collection">Collection Report</option>
+                                <option value="deposit_report">Deposit & Expense Report</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="rptCustomerFilterGroup">
+                            <label><i class="fas fa-search" style="font-size: 0.8rem; margin-right: 2px;"></i> Search Customer</label>
+                            <input type="text" id="rptCustomerSearch" class="form-control" placeholder="Type name, phone, or ID..." oninput="onReportTypeChange()">
+                        </div>
+                        <div class="form-group"><button class="btn btn-primary" style="width: 100%; height: 42px;" onclick="generateAnalyticalReport()"><i class="fas fa-search"></i> Generate</button></div>
+                    </div>
+                    <div class="report-summary">
+                        <div class="summary-box report-summary-box">
+                            <div class="report-summary-label">Transactions / Count</div>
+                            <div class="stat-value report-summary-val" id="rpt_count">-</div>
+                        </div>
+                        <div class="summary-box report-summary-box">
+                            <div class="report-summary-label">Total Amount</div>
+                            <div class="stat-value report-summary-val report-summary-total" id="rpt_total">৳ 0.00</div>
+                        </div>
+                        <div class="summary-box report-summary-box">
+                            <div class="report-summary-label">Period</div>
+                            <div class="stat-value report-summary-val report-summary-period" id="rpt_period">-</div>
+                        </div>
+                    </div>
+                    <div class="chart-card report-table-card">
+                        <div class="table-responsive">
+                            <table class="data-table report-table" id="reportResultTable">
+                                <thead id="reportHeader"></thead>
+                                <tbody id="reportContent"><tr><td colspan="12" class="text-center report-loading-cell"><i class="fas fa-chart-line" style="margin-right: 8px; color: var(--primary);"></i> Select filters and click <strong>Generate</strong> to view the report.</td></tr></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: SETTINGS & MASTER DATA -->
+                <section id="view_settings" class="view-section">
+                    <div class="page-header">
+                        <div>
+                            <h1><i class="fas fa-cog"></i> Settings & Master Data</h1>
+                            <p class="subtitle">System parameters and taxonomies stored in Supabase</p>
+                        </div>
+                        <button class="btn btn-secondary" onclick="openSupabaseConfigModal()"><i class="fas fa-lock" style="font-size: 0.78rem; margin-right: 3px; color: #f59e0b;"></i><i class="fas fa-database" style="color: #10b981;"></i> Supabase Setup</button>
+                    </div>
+
+                    <div class="settings-top-grid">
+                        <div class="chart-card" style="padding: 20px;">
+                            <h3 style="font-size: 1.05rem; margin-bottom: 15px;"><i class="fas fa-sliders-h"></i> General Configuration</h3>
+                            <form id="systemSettingsForm" style="display:flex; flex-direction:column; gap:10px;">
+                                <div class="settings-config-row">
+                                    <div class="form-group"><label>Company Name</label><input type="text" name="COMPANY_NAME" class="form-control" value="shoPPilot"></div>
+                                    <div class="form-group"><label>Currency Symbol</label><input type="text" name="CURRENCY_SYMBOL" class="form-control" value="৳"></div>
+                                </div>
+                                <div class="form-group"><label>Opening Cash Book Balance (৳)</label><input type="number" name="OPENING_CASH_BALANCE" class="form-control" value="25000"></div>
+                                <button type="button" class="btn btn-primary" onclick="saveSystemConfig()"><i class="fas fa-save"></i> Save Config</button>
+                            </form>
+                        </div>
+
+                        <!-- Theme & Appearance Settings Card -->
+                        <div class="chart-card theme-settings-card" style="padding: 20px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                <h3 style="font-size: 1.05rem; margin: 0; display: flex; align-items: center; gap: 8px;">
+                                    <i class="fas fa-palette" style="color: #6366f1;"></i>
+                                    <span>Theme & Appearance</span>
+                                </h3>
+                                <span class="theme-status-pill" id="themeStatusText">Light Mode Active</span>
+                            </div>
+                            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 16px; line-height: 1.45;">
+                                Switch between light and dark mode. Your visual preference is automatically saved and synced across sessions.
+                            </p>
+
+                            <!-- Interactive Segmented Selector -->
+                            <div class="theme-switch-container">
+                                <div class="theme-mode-option" id="themeBtnLight" onclick="window.setTheme('light')" role="button" tabindex="0">
+                                    <div class="theme-mode-preview light-preview">
+                                        <div class="preview-header"></div>
+                                        <div class="preview-body">
+                                            <div class="preview-sidebar"></div>
+                                            <div class="preview-cards">
+                                                <div class="preview-mini-card"></div>
+                                                <div class="preview-mini-card"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="theme-mode-label">
+                                        <i class="fas fa-sun" style="color: #f59e0b;"></i>
+                                        <span>Light Mode</span>
+                                    </div>
+                                </div>
+
+                                <div class="theme-mode-option" id="themeBtnDark" onclick="window.setTheme('dark')" role="button" tabindex="0">
+                                    <div class="theme-mode-preview dark-preview">
+                                        <div class="preview-header"></div>
+                                        <div class="preview-body">
+                                            <div class="preview-sidebar"></div>
+                                            <div class="preview-cards">
+                                                <div class="preview-mini-card"></div>
+                                                <div class="preview-mini-card"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="theme-mode-label">
+                                        <i class="fas fa-moon" style="color: #6366f1;"></i>
+                                        <span>Dark Mode</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Fast Toggle Row with Switch -->
+                            <div class="theme-toggle-row">
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <i class="fas fa-adjust" style="color: var(--primary); font-size: 1.1rem;"></i>
+                                    <div>
+                                        <div style="font-size: 0.9rem; font-weight: 700; color: var(--text-heading);">Dark Mode</div>
+                                        <div style="font-size: 0.75rem; color: var(--text-muted);">Toggle dark color palette</div>
+                                    </div>
+                                </div>
+                                <label class="theme-toggle-switch">
+                                    <input type="checkbox" id="settingsThemeSwitch" onchange="window.setTheme(this.checked ? 'dark' : 'light')">
+                                    <span class="theme-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-master-grid" style="margin-top:20px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
+                        <div class="chart-card" style="padding: 16px;">
+                            <h4><i class="fas fa-tags" style="color:#4361ee;"></i> Categories</h4>
+                            <div style="display:flex; gap:8px; margin: 10px 0;">
+                                <input type="text" id="newCatName" class="form-control" placeholder="New Category..." onkeydown="if(event.key==='Enter'){event.preventDefault();addMasterItem('Categories', 'newCatName');}">
+                                <button type="button" class="btn btn-primary" onclick="addMasterItem('Categories', 'newCatName')">Add</button>
+                            </div>
+                            <div id="categoryListContainer"></div>
+                        </div>
+
+                        <div class="chart-card" style="padding: 16px;">
+                            <h4><i class="fas fa-copyright" style="color:#7209b7;"></i> Brands</h4>
+                            <div style="display:flex; gap:8px; margin: 10px 0;">
+                                <input type="text" id="newBrandName" class="form-control" placeholder="New Brand..." onkeydown="if(event.key==='Enter'){event.preventDefault();addMasterItem('Brands', 'newBrandName');}">
+                                <button type="button" class="btn btn-primary" onclick="addMasterItem('Brands', 'newBrandName')">Add</button>
+                            </div>
+                            <div id="brandListContainer"></div>
+                        </div>
+
+                        <div class="chart-card" style="padding: 16px;">
+                            <h4><i class="fas fa-warehouse" style="color:#10b981;"></i> Warehouses</h4>
+                            <div style="display:flex; gap:8px; margin: 10px 0;">
+                                <input type="text" id="newWhName" class="form-control" placeholder="New Warehouse..." onkeydown="if(event.key==='Enter'){event.preventDefault();addMasterItem('Warehouses', 'newWhName');}">
+                                <button type="button" class="btn btn-primary" onclick="addMasterItem('Warehouses', 'newWhName')">Add</button>
+                            </div>
+                            <div id="warehouseListContainer"></div>
+                        </div>
+
+                        <div class="chart-card" style="padding: 16px;">
+                            <h4><i class="fas fa-university" style="color:#0284c7;"></i> Bank Accounts</h4>
+                            <div style="display:flex; gap:8px; margin: 10px 0;">
+                                <input type="text" id="newBankName" class="form-control" placeholder="New Bank..." onkeydown="if(event.key==='Enter'){event.preventDefault();addMasterItem('Settings_Banks', 'newBankName');}">
+                                <button type="button" class="btn btn-primary" onclick="addMasterItem('Settings_Banks', 'newBankName')">Add</button>
+                            </div>
+                            <div id="bankListContainer"></div>
+                        </div>
+
+                        <div class="chart-card" style="padding: 16px;">
+                            <h4><i class="fas fa-receipt" style="color:#f59e0b;"></i> Operating Expense Categories</h4>
+                            <div style="display:flex; gap:8px; margin: 10px 0;">
+                                <input type="text" id="newExpCatName" class="form-control" placeholder="New Expense Category..." onkeydown="if(event.key==='Enter'){event.preventDefault();addMasterItem('Settings_Expense_Categories', 'newExpCatName');}">
+                                <button type="button" class="btn btn-primary" onclick="addMasterItem('Settings_Expense_Categories', 'newExpCatName')">Add</button>
+                            </div>
+                            <div id="expenseCategoryListContainer"></div>
+                        </div>
+
+                        <div class="chart-card" style="padding: 16px;">
+                            <h4><i class="fas fa-user-tag" style="color:#ec4899;"></i> Customer Types</h4>
+                            <div style="display:flex; gap:8px; margin: 10px 0;">
+                                <input type="text" id="newCustTypeName" class="form-control" placeholder="New Customer Type (e.g. Retail)..." onkeydown="if(event.key==='Enter'){event.preventDefault();addMasterItem('Settings_Customer_Types', 'newCustTypeName');}">
+                                <button type="button" class="btn btn-primary" onclick="addMasterItem('Settings_Customer_Types', 'newCustTypeName')">Add</button>
+                            </div>
+                            <div id="customerTypeListContainer"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: DATA MANAGEMENT & BULK UPLOADER -->
+                <section id="view_data_management" class="view-section">
+                </section>
+
+                <!-- VIEW: USERS -->
+                <section id="view_users" class="view-section">
+                    <div class="page-header">
+                        <div>
+                            <h1><i class="fas fa-user-shield"></i> User Role Access</h1>
+                            <p class="subtitle">System credentials and permission governance</p>
+                        </div>
+                        <button class="btn btn-primary" onclick="openAddUserModal()"><i class="fas fa-plus"></i> Add New User</button>
+                    </div>
+                    <div class="chart-card">
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>User ID</th><th>Name</th><th>Email</th><th>Password</th><th>Role</th><th>Change Role</th><th>Status</th><th>Actions</th></tr></thead>
+                                <tbody id="userTableBody"><tr><td colspan="8" class="text-center">Loading users...</td></tr></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+
+    <!-- ======================================================================= -->
+    <!-- 4. MODALS & POPUPS                                                      -->
+    <!-- ======================================================================= -->
+    
+    <!-- Quick Sale Modal (Mobile App Interface) -->
+    <div id="quickSaleModal" class="modal qs-modal-wrapper" style="display:none;">
+        <div class="modal-content quick-sale-mobile-container">
+            <div id="qs_form_container" style="display: flex; flex-direction: column; height: 100%; width: 100%;">
+                <!-- Blue Mobile App Header -->
+                <div class="qs-mobile-header">
+                    <button type="button" class="qs-hdr-btn" onclick="closeModal('quickSaleModal')" title="Back">
+                        <i class="fas fa-arrow-left"></i>
+                    </button>
+                    <div class="qs-hdr-title">
+                        <span style="color: #fbbf24;">⚡</span> <span id="qsHeaderTitle">Quick Sale</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 4px;">
+                        <button type="button" class="qs-hdr-btn" onclick="toggleQsBarcodeScanner()" id="qsBarcodeHdrBtn" title="Scan Barcode with Camera">
+                            <i class="fas fa-barcode"></i>
+                        </button>
+                        <button type="button" class="qs-hdr-btn" onclick="toggleQsFullscreen()" id="qsFullscreenBtn" title="Toggle Fullscreen">
+                            <i class="fas fa-expand" id="qsFullscreenIcon"></i>
+                        </button>
+                        <button type="button" class="qs-hdr-btn" onclick="closeModal('quickSaleModal')" title="Close">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Scrollable Body with Grey Background -->
+                <div class="qs-mobile-body">
+                    <!-- Row 1: Warehouse & Memo No -->
+                    <div class="qs-grid-2" style="grid-template-columns: 1.15fr 1fr; margin-bottom: 12px;">
+                        <div>
+                            <label class="qs-field-label">WAREHOUSE</label>
+                            <select id="qs_warehouse" class="qs-wh-pill-select" onchange="onQuickSaleWarehouseChange(this.value)">
+                                <option value="W001" selected>MouloviBazar</option>
+                                <option value="W002">Begumganj 2</option>
+                                <option value="W003">Begumganj 3</option>
+                                <option value="W004">Armanitola</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="qs-field-label">MEMO NO</label>
+                            <input type="text" id="qs_memo_no" class="qs-input-field" value="23456" placeholder="Memo...">
+                        </div>
+                    </div>
+
+                    <!-- Row 2: Product Search with Search Icon, Barcode Scan Button & Dropdown -->
+                    <div style="position: relative; margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                            <label class="qs-field-label" style="margin-bottom: 0;">PRODUCT SEARCH</label>
+                            <button type="button" class="btn-qs-scan" onclick="openQsBarcodeScanner()" title="Open Camera Barcode Scanner">
+                                <i class="fas fa-camera"></i> <span>Scan Barcode</span>
+                            </button>
+                        </div>
+                        <div class="qs-search-bar">
+                            <i class="fas fa-search qs-search-icon"></i>
+                            <input type="text" id="qs_prod_search" placeholder="Search product, batch, or scan barcode..." autocomplete="off" oninput="filterQuickProducts(this.value)" onfocus="filterQuickProducts(this.value)">
+                            <button type="button" class="qs-search-barcode-btn" onclick="openQsBarcodeScanner()" title="Scan with Device Camera">
+                                <i class="fas fa-barcode"></i>
+                            </button>
+                        </div>
+                        <div id="qs_search_results" class="qs-dropdown-list" style="display:none;"></div>
+                    </div>
+
+                    <!-- CAMERA BARCODE SCANNER PANEL -->
+                    <div id="qs_camera_scanner_panel" class="qs-scanner-panel" style="display:none;">
+                        <div class="qs-scanner-header">
+                            <div class="qs-scanner-title">
+                                <span class="qs-scanner-dot"></span>
+                                <i class="fas fa-camera" style="color: #60a5fa;"></i>
+                                <span>Barcode Scanner</span>
+                            </div>
+                            <div class="qs-scanner-tools">
+                                <select id="qs_camera_select" class="qs-cam-select" onchange="switchQsCamera(this.value)" style="display:none;"></select>
+                                <button type="button" class="qs-tool-btn" id="qs_scanner_torch_btn" onclick="toggleQsTorch()" title="Toggle Flashlight" style="display:none;">
+                                    <i class="far fa-lightbulb" id="qs_torch_icon"></i>
+                                </button>
+                                <button type="button" class="qs-tool-btn active" id="qs_continuous_btn" onclick="toggleQsContinuousScan()" title="Continuous Scan Mode">
+                                    <i class="fas fa-sync-alt"></i>
+                                </button>
+                                <button type="button" class="qs-tool-btn qs-tool-close" onclick="closeQsBarcodeScanner()" title="Close Scanner">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Video Viewfinder with Targeting HUD -->
+                        <div class="qs-scanner-viewport-wrap">
+                            <div id="qs_reader" class="qs-scanner-reader"></div>
+                            
+                            <!-- Optical Reticle Overlay -->
+                            <div class="qs-scanner-overlay">
+                                <div class="qs-target-frame">
+                                    <div class="qs-corner tl"></div>
+                                    <div class="qs-corner tr"></div>
+                                    <div class="qs-corner bl"></div>
+                                    <div class="qs-corner br"></div>
+                                    <div class="qs-scanner-laser" id="qs_scanner_laser"></div>
+                                </div>
+                            </div>
+
+                            <!-- Real-time Scan Toast / Feedback -->
+                            <div id="qs_scanner_toast" class="qs-scanner-toast" style="display:none;"></div>
+                        </div>
+
+                        <!-- Status bar -->
+                        <div class="qs-scanner-status-bar">
+                            <div id="qs_scanner_status_text" class="qs-status-text">
+                                <i class="fas fa-qrcode" style="margin-right:4px;"></i> Point camera at product barcode
+                            </div>
+                        </div>
+
+                        <!-- Camera Error / Help fallback -->
+                        <div id="qs_scanner_error_box" class="qs-scanner-error" style="display:none;"></div>
+
+                        <!-- Manual barcode input & Quick test chips -->
+                        <div class="qs-manual-bar">
+                            <div class="qs-manual-input-group">
+                                <i class="fas fa-keyboard" style="color: #94a3b8; font-size: 0.85rem;"></i>
+                                <input type="text" id="qs_manual_barcode_input" placeholder="Type barcode (e.g. 8901234018)..." onkeydown="if(event.key==='Enter') scanQsBarcodeManually()">
+                                <button type="button" class="btn-qs-manual-add" onclick="scanQsBarcodeManually()">Add</button>
+                            </div>
+                            <div class="qs-test-barcodes">
+                                <span class="qs-test-label">Quick Test:</span>
+                                <button type="button" class="qs-test-chip" onclick="testQsScanBarcode('8901234018')" title="Amba Olive 250ml (8901234018)">Amba 250ml</button>
+                                <button type="button" class="qs-test-chip" onclick="testQsScanBarcode('8901234010')" title="Sesa 100ml (8901234010)">Sesa 100ml</button>
+                                <button type="button" class="qs-test-chip" onclick="testQsScanBarcode('8901234003')" title="Kali Mehedi (8901234003)">Kali Mehedi</button>
+                                <button type="button" class="qs-test-chip" onclick="testQsScanBarcode('8901234004')" title="Super Vasmol (8901234004)">Vasmol 100ml</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Row 3: Sale Date & Customer -->
+                    <div class="qs-grid-2" style="grid-template-columns: 1fr 1.6fr; margin-bottom: 14px;">
+                        <div>
+                            <label class="qs-field-label">SALE DATE</label>
+                            <input type="date" id="qs_sale_date" class="qs-input-field">
+                        </div>
+                        <div>
+                            <label class="qs-field-label">CUSTOMER</label>
+                            <select id="qs_customer" class="qs-input-field qs-select-field">
+                                <option value="Nasim Store-HBL" selected>Nasim Store-HBL</option>
+                                <option value="Hamidul Store-MEL">Hamidul Store-MEL</option>
+                                <option value="Masud Store-HBL">Masud Store-HBL</option>
+                                <option value="Hamidul Store-HBL">Hamidul Store-HBL</option>
+                                <option value="S.B.Traders-MEL">S.B.Traders-MEL</option>
+                                <option value="WALK-IN">Walk-in Customer</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Cart Items Cards -->
+                    <div id="quickCartItems"></div>
+
+                    <!-- Calculations Summary Card -->
+                    <div class="qs-calc-card">
+                        <div class="qs-grid-2" style="grid-template-columns: 1fr 1fr; margin-bottom: 10px;">
+                            <div>
+                                <label class="qs-field-label">DISCOUNT (৳)</label>
+                                <input type="number" id="qs_discount" class="qs-input-field" value="0" min="0" oninput="calculateQuickTotal()">
+                            </div>
+                            <div>
+                                <label class="qs-field-label">TAX/VAT (৳)</label>
+                                <input type="number" id="qs_tax" class="qs-input-field" value="0" min="0" oninput="calculateQuickTotal()">
+                            </div>
+                        </div>
+                        <div class="qs-grid-2" style="grid-template-columns: 1fr 1fr;">
+                            <div>
+                                <label class="qs-field-label">PAID AMOUNT</label>
+                                <input type="number" id="qs_paid" class="qs-input-field" placeholder="0.00" min="0" oninput="calculateQuickTotal()">
+                            </div>
+                            <div>
+                                <label class="qs-field-label">DUE AMOUNT</label>
+                                <input type="text" id="qs_due" class="qs-input-field qs-due-highlight" readonly value="23032">
+                            </div>
+                        </div>
+                        <div style="margin-top: 10px;">
+                            <label class="qs-field-label">PAYMENT MODE</label>
+                            <select id="qs_payment_mode" class="qs-input-field qs-select-field" onchange="onQsPaymentModeChange()">
+                                <option value="Cash" selected>Cash</option>
+                                <option value="Credit (Due)">Credit (Due)</option>
+                                <option value="Bank">Bank</option>
+                                <option value="Bkash">Bkash</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer with Total Payable & Actions -->
+                <div class="qs-mobile-footer">
+                    <div class="qs-total-payable-bar">
+                        <span class="qs-total-label">TOTAL PAYABLE</span>
+                        <span class="qs-total-val">৳ <span id="qs_total_text">23,032</span></span>
+                    </div>
+                    <div class="qs-actions-row">
+                        <button type="button" class="qs-btn-clear" onclick="clearQuickCart()">Clear</button>
+                        <button type="button" class="qs-btn-submit" id="btnQuickSaleSubmit" onclick="submitQuickSale()">SUBMIT</button>
+                        <button type="button" class="qs-btn-full" onclick="qsFullPaid()">Full</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Success Screen -->
+            <div id="qs_success_screen" style="display:none; height:100%; flex-direction:column; align-items:center; justify-content:center; padding:30px 20px; text-align:center; background:#ffffff;">
+                <div style="width:70px; height:70px; border-radius:50%; background:#dcfce7; color:#16a34a; display:flex; align-items:center; justify-content:center; font-size:2.2rem; margin-bottom:16px;">
+                    <i class="fas fa-check"></i>
+                </div>
+                <h3 style="margin: 0 0 6px 0; font-size: 1.35rem; font-weight: 800; color: #0f172a;">Sale Successful!</h3>
+                <p style="color: #64748b; font-size: 0.9rem; margin-bottom: 20px;">Invoice: <strong id="qs_success_invoice_no" style="color:#2563eb;">-</strong></p>
+                <div style="display:flex; gap:10px; width:100%; max-width:280px;">
+                    <button type="button" class="btn btn-secondary" onclick="resetQuickSaleUI()" style="flex:1;">Close</button>
+                    <button type="button" class="btn btn-primary" onclick="resetQuickSaleUI(); openQuickSale();" style="flex:1;">New Sale</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Purchase Modal (Mobile App Interface) -->
+    <div id="quickPurchaseModule" class="modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.65); z-index:1000; align-items:center; justify-content:center; backdrop-filter:blur(3px);">
+        <div class="modal-content quick-purchase-mobile-container">
+            <div id="qp_form_container" style="display: flex; flex-direction: column; height: 100%; width: 100%;">
+                <!-- Green Mobile App Header -->
+                <div class="qs-mobile-header" style="background: linear-gradient(135deg, #059669 0%, #10b981 100%);">
+                    <button type="button" class="qs-hdr-btn" onclick="closeQuickPurchase()" title="Back">
+                        <i class="fas fa-arrow-left"></i>
+                    </button>
+                    <div class="qs-hdr-title">
+                        <span style="color: #fde047;">⚡</span> Quick Purchase
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 4px;">
+                        <button type="button" class="qs-hdr-btn" onclick="toggleQpBarcodeScanner()" id="qpBarcodeHdrBtn" title="Scan Barcode with Camera">
+                            <i class="fas fa-barcode"></i>
+                        </button>
+                        <button type="button" class="qs-hdr-btn" onclick="closeQuickPurchase()" title="Close">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Scrollable Body with Grey Background -->
+                <div class="qs-mobile-body">
+                    <!-- CAMERA BARCODE SCANNER PANEL FOR QUICK PURCHASE -->
+                    <div id="qp_camera_scanner_panel" class="qs-scanner-panel" style="display:none; margin-bottom: 12px;">
+                        <div class="qs-scanner-header">
+                            <div class="qs-scanner-title">
+                                <span class="qs-scanner-dot"></span>
+                                <i class="fas fa-camera" style="color: #34d399;"></i>
+                                <span>Quick Purchase Scanner</span>
+                            </div>
+                            <div class="qs-scanner-tools">
+                                <select id="qp_camera_select" class="qs-cam-select" onchange="switchQpCamera(this.value)" style="display:none;"></select>
+                                <button type="button" class="qs-tool-btn" id="qp_scanner_torch_btn" onclick="toggleQpTorch()" title="Toggle Flashlight" style="display:none;">
+                                    <i class="far fa-lightbulb" id="qp_torch_icon"></i>
+                                </button>
+                                <button type="button" class="qs-tool-btn active" id="qp_continuous_btn" onclick="toggleQpContinuousScan()" title="Continuous Scan Mode">
+                                    <i class="fas fa-sync-alt"></i>
+                                </button>
+                                <button type="button" class="qs-tool-btn qs-tool-close" onclick="closeQpBarcodeScanner()" title="Close Scanner">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="qs-scanner-viewport-wrap">
+                            <div id="qp_reader" class="qs-scanner-reader"></div>
+                            <div class="qs-scanner-overlay">
+                                <div class="qs-target-frame">
+                                    <div class="qs-corner tl"></div>
+                                    <div class="qs-corner tr"></div>
+                                    <div class="qs-corner bl"></div>
+                                    <div class="qs-corner br"></div>
+                                    <div class="qs-scanner-laser" id="qp_scanner_laser"></div>
+                                </div>
+                            </div>
+                            <div id="qp_scanner_toast" class="qs-scanner-toast" style="display:none;"></div>
+                        </div>
+                        <div class="qs-scanner-status-bar">
+                            <div id="qp_scanner_status_text" class="qs-status-text">
+                                <i class="fas fa-qrcode" style="margin-right:4px;"></i> Point camera at product barcode
+                            </div>
+                        </div>
+                        <div id="qp_scanner_error_box" style="display:none; padding:10px 14px; background:#fff1f2; border-top:1px solid #fecdd3; font-size:0.8rem; color:#e11d48;"></div>
+                    </div>
+
+                    <!-- Row 1: Destination Warehouse & PO/Invoice No -->
+                    <div class="qs-grid-2" style="grid-template-columns: 1.15fr 1fr; margin-bottom: 12px;">
+                        <div>
+                            <label class="qs-field-label">DESTINATION WAREHOUSE</label>
+                            <select id="qp_warehouse_select" class="qs-wh-pill-select" style="background-color: #ecfdf5; border-color: #a7f3d0; color: #047857;"></select>
+                        </div>
+                        <div>
+                            <label class="qs-field-label">PO / INVOICE NO</label>
+                            <input type="text" id="qp_invoice_no" class="qs-input-field" placeholder="Auto / PO-2026-...">
+                        </div>
+                    </div>
+
+                    <!-- Row 2: Product Search with Search Icon & Dropdown -->
+                    <div style="position: relative; margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                            <label class="qs-field-label" style="margin-bottom: 0;">PRODUCT SEARCH &amp; BARCODE</label>
+                            <span id="qp_barcode_tip" style="font-size: 0.72rem; color: #10b981; font-weight: 700;"></span>
+                        </div>
+                        <div class="qs-search-bar" style="display: flex; align-items: center; gap: 6px;">
+                            <i class="fas fa-search qs-search-icon" style="color: #10b981;"></i>
+                            <input type="text" id="qp_search_input" placeholder="Type product name, code, or scan barcode..." autocomplete="off" oninput="qp_filterProducts(this.value)" onfocus="qp_filterProducts(this.value)" onkeydown="if(event.key==='Enter'){ event.preventDefault(); qp_scanBarcodeDirect(this.value); }" style="flex: 1;">
+                            <button type="button" class="btn" onclick="if(document.getElementById('qp_search_input').value.trim()){ qp_scanBarcodeDirect(document.getElementById('qp_search_input').value); } else { toggleQpBarcodeScanner(); }" title="Scan or Lookup Barcode" style="background: #eef2ff; color: #4361ee; border: 1.5px solid #c7d2fe; border-radius: 8px; height: 36px; padding: 0 10px; font-size: 0.78rem; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap;">
+                                <i class="fas fa-barcode"></i> <span>Scan</span>
+                            </button>
+                        </div>
+                        <div id="qp_results" class="qs-dropdown-list" style="display:none;"></div>
+                    </div>
+
+                    <!-- Row 3: Purchase Date & Supplier -->
+                    <div class="qs-grid-2" style="grid-template-columns: 1fr 1.5fr; margin-bottom: 14px;">
+                        <div>
+                            <label class="qs-field-label">PURCHASE DATE</label>
+                            <input type="date" id="qp_purchase_date" class="qs-input-field">
+                        </div>
+                        <div>
+                            <label class="qs-field-label">SUPPLIER</label>
+                            <select id="qp_supplier_select" class="qs-input-field qs-select-field"></select>
+                        </div>
+                    </div>
+
+                    <!-- Cart Items Cards Container -->
+                    <div id="quickPurchCartItems"></div>
+
+                    <!-- Calculations Summary Card -->
+                    <div class="qs-calc-card">
+                        <div class="qs-grid-2" style="grid-template-columns: 1fr 1fr; margin-bottom: 10px;">
+                            <div>
+                                <label class="qs-field-label">TOTAL CARTONS</label>
+                                <input type="text" id="qp_summary_ctn" class="qs-input-field" readonly value="0 CTN" style="font-weight: 800; background: #f8fafc; color: #065f46;">
+                            </div>
+                            <div>
+                                <label class="qs-field-label">TOTAL PIECES</label>
+                                <input type="text" id="qp_summary_pcs" class="qs-input-field" readonly value="0 pcs" style="font-weight: 800; background: #f8fafc; color: #047857;">
+                            </div>
+                        </div>
+                        <div class="qs-grid-2" style="grid-template-columns: 1fr 1fr;">
+                            <div>
+                                <label class="qs-field-label">PAID AMOUNT (৳)</label>
+                                <input type="number" id="qp_paid_amount" class="qs-input-field" placeholder="0.00" min="0" oninput="qp_calculateTotals()">
+                            </div>
+                            <div>
+                                <label class="qs-field-label">DUE AMOUNT (৳)</label>
+                                <input type="text" id="qp_due_amount" class="qs-input-field qs-due-highlight" readonly value="0">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer with Total Payable & Actions -->
+                <div class="qs-mobile-footer">
+                    <div class="qs-total-payable-bar" style="background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%); border-color: #a7f3d0;">
+                        <span class="qs-total-label" style="color: #065f46;">TOTAL PAYABLE</span>
+                        <span class="qs-total-val" style="color: #047857;">৳ <span id="qp_total_text">0</span></span>
+                    </div>
+                    <div class="qs-actions-row">
+                        <button type="button" class="qs-btn-clear" onclick="qp_clearCart()">Clear</button>
+                        <button type="button" class="qs-btn-submit" id="qp_btn_submit" onclick="qp_submit()" style="background: #059669;">CONFIRM </button>
+                        <button type="button" class="qs-btn-full" onclick="qp_fullPaid()" style="background: #10b981;">Full</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Success Screen -->
+            <div id="qp_success_screen" style="display:none; height:100%; flex-direction:column; align-items:center; justify-content:center; padding:30px 20px; text-align:center; background:#ffffff;">
+                <div style="width:70px; height:70px; border-radius:50%; background:#dcfce7; color:#16a34a; display:flex; align-items:center; justify-content:center; font-size:2.2rem; margin-bottom:16px;">
+                    <i class="fas fa-check"></i>
+                </div>
+                <h3 style="margin: 0 0 6px 0; font-size: 1.35rem; font-weight: 800; color: #0f172a;">Purchase Recorded!</h3>
+                <p style="color: #64748b; font-size: 0.9rem; margin-bottom: 20px;">Purchase Order: <strong id="qp_success_po_no" style="color:#059669;">-</strong></p>
+                <div style="display:flex; gap:10px; width:100%; max-width:280px;">
+                    <button type="button" class="btn btn-secondary" onclick="qp_resetUI(); closeQuickPurchase();" style="flex:1;">Close</button>
+                    <button type="button" class="btn btn-primary" onclick="qp_resetUI(); openQuickPurchase();" style="flex:1; background: #059669; border-color: #059669;">New Purchase</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Product Modal -->
+    <div id="productModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header"><h3 id="productModalTitle">Add Product</h3><button class="btn-close" onclick="closeModal('productModal')">&times;</button></div>
+            <div class="modal-body">
+                <form id="productForm" onsubmit="event.preventDefault(); handleProductSubmit();">
+                    <input type="hidden" id="edit_product_id">
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                        <div class="form-group"><label>Product Code</label><input type="text" id="p_id" class="form-control" placeholder="e.g. P0017" required></div>
+                        <div class="form-group">
+                            <label style="display: flex; justify-content: space-between; align-items: center;">
+                                <span><i class="fas fa-barcode" style="color: #4361ee; margin-right: 4px;"></i> Barcode</span>
+                                <span style="font-size: 0.72rem; color: #64748b; font-weight: normal;">(Optional / Auto)</span>
+                            </label>
+                            <div style="display: flex; gap: 6px;">
+                                <input type="text" id="p_barcode" class="form-control" placeholder="Barcode or scan..." style="flex: 1; font-family: monospace; font-size: 0.88rem;">
+                                <button type="button" class="btn btn-secondary" onclick="generateProductBarcode()" title="Generate Unique Barcode" style="padding: 0 10px; font-weight: 600; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;">
+                                    <i class="fas fa-magic" style="color: #f59e0b;"></i> Auto
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group"><label>Product Name</label><input type="text" id="p_name" class="form-control" placeholder="e.g. Sesa Hair Oil 100ml" required></div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                        <div class="form-group"><label>Category</label><select id="p_category" class="form-control"><option value="">Select Category</option></select></div>
+                        <div class="form-group"><label>Brand</label><select id="p_brand" class="form-control"><option value="">Select Brand</option></select></div>
+                    </div>
+                    <div class="form-group"><label>Pack Size (UPC)</label><input type="text" id="p_upc" class="form-control" value="1"></div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                        <div class="form-group"><label>Initial Stock</label><input type="number" id="p_stock" class="form-control" value="0"></div>
+                        <div class="form-group"><label>Warehouse</label><select id="p_warehouse" class="form-control"></select></div>
+                    </div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;">
+                        <div class="form-group"><label>Cost Price</label><input type="number" id="p_unit_price" class="form-control" value="0"></div>
+                        <div class="form-group"><label>Sale Price</label><input type="number" id="p_sale_price" class="form-control" value="0"></div>
+                        <div class="form-group"><label>MRP Price</label><input type="number" id="p_mrp_price" class="form-control" value="0"></div>
+                    </div>
+                    <div class="form-group"><label>Expiry Date</label><input type="date" id="p_expiry" class="form-control"></div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('productModal')">Cancel</button>
+                <button type="button" class="btn btn-primary" id="btnProductSubmit" onclick="handleProductSubmit()"><i class="fas fa-save"></i> Save Product</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stock Transfer Modal -->
+    <div id="transferModal" class="modal">
+        <div class="modal-content" style="max-width: 480px; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.15);">
+            <div class="modal-header" style="background: #10b981; color: white; padding: 16px 22px;">
+                <h3 style="margin: 0; font-size: 1.15rem; font-weight: 700; color: white; display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-exchange-alt"></i> Stock Transfer Between Warehouses
+                </h3>
+                <button class="btn-close" onclick="closeModal('transferModal')" style="color: white; font-size: 1.5rem; line-height: 1; border: none; background: none; cursor: pointer;">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 22px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="trf-field-label">Source Warehouse</label>
+                        <select id="trf_source" class="form-control" onchange="onTrfSourceChange()"></select>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="trf-field-label">Destination Warehouse</label>
+                        <select id="trf_dest" class="form-control"></select>
+                    </div>
+                </div>
+                <div class="form-group" style="position: relative; margin-bottom: 14px;">
+                    <label class="trf-field-label">Product</label>
+                    <input type="text" id="trf_search_input" class="form-control" placeholder="Select Source warehouse first..." disabled onfocus="trf_showAllProducts()" oninput="trf_filterProducts(this.value)">
+                    <div id="trf_dropdown" class="trf-search-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 1050; max-height: 200px; overflow-y: auto;"></div>
+                    <input type="hidden" id="trf_selected_id">
+                    <input type="hidden" id="trf_selected_batch">
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="trf-field-label">Available Stock</label>
+                        <input type="number" id="trf_available" class="form-control trf-avail-input" readonly placeholder="0">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="trf-field-label">Transfer Qty</label>
+                        <input type="number" id="trf_qty" class="form-control" min="1" placeholder="Quantity">
+                    </div>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label class="trf-field-label">Note / Reason</label>
+                    <input type="text" id="trf_note" class="form-control" placeholder="Optional transfer note...">
+                </div>
+            </div>
+            <div class="modal-footer" style="padding: 14px 22px; display: flex; justify-content: flex-end; gap: 10px;">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('transferModal')" style="padding: 9px 18px; border-radius: 8px;">Cancel</button>
+                <button type="button" class="btn btn-success" id="btnExecuteTransferModal" onclick="executeTransfer()" style="padding: 9px 20px; font-weight: 700; border-radius: 8px; display: inline-flex; align-items: center; gap: 6px;">
+                    <i class="fas fa-exchange-alt"></i> Complete Transfer
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Customer Modal (Add & Edit) -->
+    <div id="customerModal" class="modal">
+        <div class="modal-content" style="max-width: 480px; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);">
+            <div class="modal-header" style="background: #4361ee; color: white; padding: 16px 22px;">
+                <h3 id="customerModalTitle" style="margin:0; font-size: 1.15rem; font-weight: 700; color: white; display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-user-plus"></i> Add New Customer
+                </h3>
+                <button class="btn-close" onclick="closeModal('customerModal')" style="color: white; opacity: 1; font-size: 1.25rem;">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 22px 24px;">
+                <form id="customerForm" onsubmit="event.preventDefault(); saveCustomer();">
+                    <input type="hidden" id="c_id">
+                    <div class="form-group" style="margin-bottom: 14px;">
+                        <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">Customer Name <span style="color:#ef4444;">*</span></label>
+                        <input type="text" id="c_name" class="form-control" placeholder="e.g. Masud Store-HBL" required style="border-radius: 10px; border: 1.5px solid #cbd5e1; padding: 10px 14px;">
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px;">
+                        <div class="form-group" style="margin: 0;">
+                            <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">Customer Type <span style="color:#ef4444;">*</span></label>
+                            <select id="c_type" class="form-control" style="font-weight: 600; border-radius: 10px; border: 1.5px solid #cbd5e1; padding: 10px 14px;">
+                                <option value="Retail" selected>Retail</option>
+                                <option value="Wholesale">Wholesale</option>
+                                <option value="Corporate">Corporate</option>
+                                <option value="Distributor">Distributor</option>
+                                <option value="Dealer">Dealer</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin: 0;">
+                            <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">Phone</label>
+                            <input type="text" id="c_phone" class="form-control" placeholder="017xxxxxxxx" style="border-radius: 10px; border: 1.5px solid #cbd5e1; padding: 10px 14px;">
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 14px;">
+                        <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">Address</label>
+                        <textarea id="c_address" class="form-control" rows="2" placeholder="Market, City, Area" style="border-radius: 10px; border: 1.5px solid #cbd5e1; padding: 10px 14px; resize: none;"></textarea>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 6px;">
+                        <div class="form-group" style="margin: 0;">
+                            <label id="c_due_label" style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">Opening Due (৳)</label>
+                            <input type="number" id="c_due" class="form-control" value="0" min="0" step="any" style="border-radius: 10px; border: 1.5px solid #cbd5e1; padding: 10px 14px;">
+                        </div>
+                        <div class="form-group" style="margin: 0;">
+                            <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">Status</label>
+                            <select id="c_status" class="form-control" style="font-weight: 600; border-radius: 10px; border: 1.5px solid #cbd5e1; padding: 10px 14px;">
+                                <option value="Active" selected>Active</option>
+                                <option value="Inactive">Inactive</option>
+                            </select>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer" style="padding: 14px 22px; border-top: 1px solid #f1f5f9; display: flex; justify-content: flex-end; gap: 10px; background: #ffffff;">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('customerModal')" style="background: #526173; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600;">Cancel</button>
+                <button type="button" class="btn btn-primary" id="btnSaveCustomer" onclick="saveCustomer()" style="background: #3b66f5; color: white; border: none; padding: 10px 22px; border-radius: 8px; font-weight: 700; display: flex; align-items: center; gap: 6px;">
+                    <i class="fas fa-save"></i> <span id="btnSaveCustomerText">Save Customer</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Supplier Modal -->
+    <div id="supplierModal" class="modal">
+        <div class="modal-content" style="max-width: 480px; border-radius: 16px; overflow: hidden; background: #ffffff; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);">
+            <div class="modal-header" style="background: #3b82f6; color: white; padding: 16px 22px; display: flex; justify-content: space-between; align-items: center;">
+                <h3 id="supplierModalTitle" style="margin: 0; font-size: 1.15rem; font-weight: 700; color: #ffffff; display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-truck-loading"></i> Add Supplier
+                </h3>
+                <button type="button" class="btn-close" onclick="closeModal('supplierModal')" style="color: #ffffff; font-size: 1.35rem; line-height: 1; background: transparent; border: none; cursor: pointer; opacity: 0.9;">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 22px 24px;">
+                <form id="supplierForm" onsubmit="event.preventDefault(); saveSupplier();">
+                    <input type="hidden" id="s_id">
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">Supplier Name *</label>
+                        <input type="text" id="s_name" class="form-control" placeholder="e.g. Aman Trading Corp" required style="font-weight: 600; border-radius: 10px; border: 1.5px solid #cbd5e1; padding: 10px 14px;">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">Contact Person</label>
+                        <input type="text" id="s_contact" class="form-control" placeholder="e.g. Rafiqul Islam" style="font-weight: 600; border-radius: 10px; border: 1.5px solid #cbd5e1; padding: 10px 14px;">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 6px;">
+                        <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">Phone Number *</label>
+                        <input type="text" id="s_phone" class="form-control" placeholder="e.g. +880 1712-345678" required style="font-weight: 600; border-radius: 10px; border: 1.5px solid #cbd5e1; padding: 10px 14px;">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer" style="padding: 14px 22px; border-top: 1px solid #f1f5f9; display: flex; justify-content: flex-end; gap: 10px; background: #ffffff;">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('supplierModal')" style="background: #526173; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600;">Cancel</button>
+                <button type="button" class="btn btn-primary" id="btnSaveSupplier" onclick="saveSupplier()" style="background: #3b82f6; color: white; border: none; padding: 10px 22px; border-radius: 8px; font-weight: 700; display: flex; align-items: center; gap: 6px;">
+                    <i class="fas fa-save"></i> <span id="btnSaveSupplierText">Save Supplier</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Receive Payment Modal (Pixel-Perfect Matching Spec) -->
+    <div id="paymentModal" class="modal">
+        <div class="modal-content" style="max-width: 520px; border-radius: 16px; overflow: hidden; background: #ffffff; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);">
+            <div class="modal-header" style="background: #4361ee; color: #ffffff; padding: 14px 22px; display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="margin: 0; font-size: 1.15rem; font-weight: 700; color: #ffffff; display: flex; align-items: center; gap: 10px;">
+                    <i class="fas fa-money-bill-wave"></i> Receive Payment
+                </h3>
+                <button type="button" class="btn-close" onclick="closeModal('paymentModal')" style="color: #ffffff; font-size: 1.35rem; line-height: 1; background: transparent; border: none; cursor: pointer; opacity: 0.9;">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 22px 24px;">
+                <input type="hidden" id="pay_cust_id">
+                
+                <!-- Customer & Due Balance Banner -->
+                <div style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 16px 20px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
+                    <div>
+                        <div style="font-size: 0.7rem; font-weight: 800; color: #64748b; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 4px;">CUSTOMER</div>
+                        <div id="pay_cust_name" style="font-size: 1.15rem; font-weight: 800; color: #0f172a;">Hamidul Store-MEL</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="font-size: 0.7rem; font-weight: 800; color: #64748b; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 4px;">DUE BALANCE</div>
+                        <div id="pay_cust_due" style="font-size: 1.35rem; font-weight: 800; color: #ef4444; letter-spacing: -0.02em;">৳ 0.00</div>
+                    </div>
+                </div>
+
+                <!-- Row 1: Payment Date & Memo No -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                    <div class="form-group" style="margin: 0;">
+                        <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">PAYMENT DATE</label>
+                        <input type="date" id="pay_date" class="form-control" style="border-radius: 10px; padding: 10px 14px; border: 1.5px solid #cbd5e1; font-weight: 500;">
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">MEMO NO</label>
+                        <input type="text" id="pay_memo_no" class="form-control" placeholder="e.g. 1024" style="border-radius: 10px; padding: 10px 14px; border: 1.5px solid #cbd5e1;">
+                    </div>
+                </div>
+
+                <!-- Row 2: Specific Invoice -->
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">SPECIFIC INVOICE</label>
+                    <select id="pay_invoice" class="form-control" onchange="onPaymentInvoiceSelect(this.value)" style="border-radius: 10px; padding: 10px 14px; border: 1.5px solid #cbd5e1; font-weight: 500; width: 100%;">
+                        <option value="">-- Bulk Payment / Advance --</option>
+                    </select>
+                </div>
+
+                <!-- Row 3: Category & Payment Mode -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                    <div class="form-group" style="margin: 0;">
+                        <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">CATEGORY</label>
+                        <select id="pay_category" class="form-control" style="border-radius: 10px; padding: 10px 14px; border: 1.5px solid #cbd5e1; font-weight: 500; width: 100%;">
+                            <option value="All / General">All / General</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">PAYMENT MODE</label>
+                        <select id="pay_mode" class="form-control" onchange="onPaymentModeSelect(this.value)" style="border-radius: 10px; padding: 10px 14px; border: 1.5px solid #cbd5e1; font-weight: 500; width: 100%;">
+                            <option value="Cash" selected>Cash</option>
+                            <option value="Bank">Bank</option>
+                            <option value="Bkash">Bkash</option>
+                            <option value="Nagad">Nagad</option>
+                            <option value="Cheque">Cheque</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Row 4: Bank Name & Amount -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                    <div class="form-group" style="margin: 0;">
+                        <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">BANK NAME</label>
+                        <select id="pay_bank" class="form-control" style="border-radius: 10px; padding: 10px 14px; border: 1.5px solid #cbd5e1; font-weight: 500; width: 100%;">
+                            <option value="">-- Select Bank (Optional) --</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">AMOUNT (৳)</label>
+                        <input type="number" step="any" id="pay_amount" class="form-control" placeholder="0.00" value="0.00" style="border-radius: 10px; padding: 10px 14px; border: 1.5px solid #cbd5e1; font-weight: 700; width: 100%;" required>
+                    </div>
+                </div>
+
+                <!-- Row 5: Narration / Note -->
+                <div class="form-group" style="margin-bottom: 6px;">
+                    <label style="font-size: 0.72rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: block;">NARRATION / NOTE</label>
+                    <textarea id="pay_note" class="form-control" rows="2" placeholder="Optional payment remarks..." style="border-radius: 10px; padding: 10px 14px; border: 1.5px solid #cbd5e1; resize: none; width: 100%;"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer" style="padding: 16px 24px; border-top: 1px solid #f1f5f9; display: flex; justify-content: flex-end; gap: 12px; background: #ffffff;">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('paymentModal')" style="background: #526173; color: white; border: none; padding: 10px 22px; border-radius: 8px; font-weight: 600; cursor: pointer;">Cancel</button>
+                <button type="button" class="btn btn-primary" id="btnProcessPayment" onclick="processPayment()" style="background: #3b66f5; color: white; border: none; padding: 10px 24px; border-radius: 8px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 12px rgba(59, 102, 245, 0.3);">
+                    <i class="fas fa-check"></i> Save Payment
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- User Modal -->
+    <div id="addUserModal" class="modal">
+        <div class="modal-content" style="max-width: 420px;">
+            <div class="modal-header"><h3>Add User</h3><button class="btn-close" onclick="closeModal('addUserModal')">&times;</button></div>
+            <div class="modal-body">
+                <form id="addUserForm">
+                    <div class="form-group"><label>Name</label><input type="text" id="new_name" class="form-control" required></div>
+                    <div class="form-group"><label>Email</label><input type="email" id="new_email" class="form-control" required></div>
+                    <div class="form-group"><label>Password</label><input type="password" id="new_password" class="form-control" required></div>
+                    <div class="form-group"><label>Role</label><select id="new_role" class="form-control"><option value="Admin">Admin</option><option value="Manager">Manager</option><option value="Sales">Sales</option><option value="Viewer">Viewer</option></select></div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('addUserModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="submitNewUser()">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Universal Lookup Modal -->
+    <div id="docLookupModal" class="modal">
+        <div class="modal-content doc-lookup-modal-content" style="max-width: 600px; border-radius: 16px; overflow: hidden; border: none; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);">
+            <div class="modal-header" style="background:#1e293b; color:white; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155;">
+                <h3 style="margin:0; font-size: 1.15rem; font-weight: 800; display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-search" style="color:#38bdf8;"></i> Universal Document Lookup
+                </h3>
+                <button type="button" class="btn-close" onclick="closeModal('docLookupModal')" style="color:white; opacity: 0.85; font-size: 1.4rem; background: none; border: none; cursor: pointer; padding: 0; line-height: 1;" title="Close">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 20px; max-height: calc(88vh - 120px); overflow-y: auto;">
+                <div style="display:flex; gap:10px;">
+                    <input type="text" id="docLookupInput" class="form-control" placeholder="Search by Invoice (INV-...), Memo, Purchase..." onkeyup="if(event.key==='Enter') executeUniversalLookup()" style="height: 44px; border-radius: 10px; font-size: 0.95rem; font-weight: 600; padding: 0 14px;">
+                    <button class="btn btn-primary" onclick="executeUniversalLookup()" style="height: 44px; padding: 0 22px; border-radius: 10px; font-weight: 700; display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; background: #3b82f6;">
+                        <i class="fas fa-search"></i> Search
+                    </button>
+                </div>
+                <div class="doc-lookup-hint">
+                    <span style="font-style: normal;">💡</span> Supports Sales Invoices, Memo Numbers, Purchase Procurements, and Operating Expenses.
+                </div>
+                <div id="docLookupEmptyArea" class="doc-lookup-empty-box">
+                    <i class="fas fa-file-invoice" style="font-size: 2.2rem; margin-bottom: 10px; display: block; opacity: 0.6;"></i>
+                    Enter document ID to search
+                </div>
+                <div id="docLookupResultArea" style="display:none;"></div>
+            </div>
+            <div class="modal-footer" style="padding: 12px 20px; display: flex; justify-content: flex-end;">
+                <button type="button" class="btn" onclick="closeModal('docLookupModal')" style="background: #475569; color: white; border-radius: 8px; padding: 8px 24px; font-weight: 700; border: none; cursor: pointer;">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Multi-Product Purchase Inbound Modal -->
+    <div id="multiPurchaseModal" class="modal">
+        <div class="modal-content mpp-modal-content" style="max-width: 860px; width: 95%; border-radius: 16px; overflow: hidden; border: none; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);">
+            <!-- Modal Header -->
+            <div class="modal-header" style="background: #4361ee; color: white; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="margin: 0; font-size: 1.15rem; font-weight: 800; display: flex; align-items: center; gap: 10px; color: white;">
+                    <i class="fas fa-truck-loading" style="color: white; font-size: 1.25rem;"></i> Multi-Product Purchase Inbound
+                </h3>
+                <button type="button" class="btn-close" onclick="closeModal('multiPurchaseModal')" style="color: white; opacity: 0.9; font-size: 1.4rem; background: none; border: none; cursor: pointer; padding: 0; line-height: 1;" title="Close">&times;</button>
+            </div>
+
+            <!-- Modal Body -->
+            <div class="modal-body mpp-modal-body" style="padding: 20px; max-height: calc(90vh - 120px); overflow-y: auto;">
+                <!-- Section 1: Destination Warehouse, Supplier, Purchase Date -->
+                <div class="mpp-top-card" style="border-radius: 12px; padding: 16px; margin-bottom: 16px;">
+                    <div class="mpp-top-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
+                        <div>
+                            <label class="mpp-section-label">DESTINATION WAREHOUSE</label>
+                            <select id="mpp_warehouse_select" class="form-control mpp-select-wh" style="height: 42px; border-radius: 10px; font-weight: 700; padding: 0 12px;"></select>
+                        </div>
+                        <div>
+                            <label class="mpp-section-label">SUPPLIER</label>
+                            <select id="mpp_supplier_select" class="form-control mpp-input" style="height: 42px; border-radius: 10px; font-weight: 600; padding: 0 12px;">
+                                <option value="">Select Supplier</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="mpp-section-label">PURCHASE DATE</label>
+                            <input type="date" id="mpp_purchase_date" class="form-control mpp-input" style="height: 42px; border-radius: 10px; font-weight: 600; padding: 0 12px;">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 2: Inbound Product Entry -->
+                <div class="mpp-entry-card" style="border-radius: 12px; padding: 16px; margin-bottom: 16px;">
+                    <div class="mpp-entry-header" style="display: flex; align-items: center; justify-content: space-between; font-size: 0.85rem; font-weight: 800; margin-bottom: 14px; text-transform: uppercase; letter-spacing: 0.03em;">
+                        <span style="display: flex; align-items: center; gap: 8px;">
+                            <i class="fas fa-plus-circle" style="color: #10b981; font-size: 1.05rem;"></i> INBOUND PRODUCT ENTRY
+                        </span>
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="toggleMppBarcodeScanner()" id="mppBarcodeHdrBtn" style="font-size: 0.76rem; padding: 3px 8px; border-radius: 6px; display: inline-flex; align-items: center; gap: 5px;">
+                            <i class="fas fa-camera"></i> <span>Camera Scanner</span>
+                        </button>
+                    </div>
+
+                    <!-- CAMERA BARCODE SCANNER PANEL FOR MULTI PURCHASE -->
+                    <div id="mpp_camera_scanner_panel" class="qs-scanner-panel" style="display:none; margin-bottom: 14px;">
+                        <div class="qs-scanner-header">
+                            <div class="qs-scanner-title">
+                                <span class="qs-scanner-dot"></span>
+                                <i class="fas fa-camera" style="color: #60a5fa;"></i>
+                                <span>Inbound Barcode Scanner</span>
+                            </div>
+                            <div class="qs-scanner-tools">
+                                <select id="mpp_camera_select" class="qs-cam-select" onchange="switchMppCamera(this.value)" style="display:none;"></select>
+                                <button type="button" class="qs-tool-btn" id="mpp_scanner_torch_btn" onclick="toggleMppTorch()" title="Toggle Flashlight" style="display:none;">
+                                    <i class="far fa-lightbulb" id="mpp_torch_icon"></i>
+                                </button>
+                                <button type="button" class="qs-tool-btn active" id="mpp_continuous_btn" onclick="toggleMppContinuousScan()" title="Continuous Scan Mode">
+                                    <i class="fas fa-sync-alt"></i>
+                                </button>
+                                <button type="button" class="qs-tool-btn qs-tool-close" onclick="closeMppBarcodeScanner()" title="Close Scanner">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="qs-scanner-viewport-wrap">
+                            <div id="mpp_reader" class="qs-scanner-reader"></div>
+                            <div class="qs-scanner-overlay">
+                                <div class="qs-target-frame">
+                                    <div class="qs-corner tl"></div>
+                                    <div class="qs-corner tr"></div>
+                                    <div class="qs-corner bl"></div>
+                                    <div class="qs-corner br"></div>
+                                    <div class="qs-scanner-laser" id="mpp_scanner_laser"></div>
+                                </div>
+                            </div>
+                            <div id="mpp_scanner_toast" class="qs-scanner-toast" style="display:none;"></div>
+                        </div>
+                        <div class="qs-scanner-status-bar">
+                            <div id="mpp_scanner_status_text" class="qs-status-text">
+                                <i class="fas fa-qrcode" style="margin-right:4px;"></i> Point camera at product barcode
+                            </div>
+                        </div>
+                        <div id="mpp_scanner_error_box" style="display:none; padding:10px 14px; background:#fff1f2; border-top:1px solid #fecdd3; font-size:0.8rem; color:#e11d48;"></div>
+                    </div>
+
+                    <!-- Row 1: Search, Barcode, Batch, Expiry -->
+                    <div class="mpp-entry-row1" style="display: grid; grid-template-columns: 2fr 1.3fr 1fr 1fr; gap: 12px; margin-bottom: 14px;">
+                        <div style="position: relative;">
+                            <label class="mpp-field-label">Product Search</label>
+                            <input type="text" id="mpp_prod_search" class="form-control mpp-input" placeholder="Type product name/code..." autocomplete="off" oninput="mpp_searchProducts(this.value)" style="height: 40px; border-radius: 8px; font-size: 0.88rem;">
+                            <div id="mpp_prod_dropdown" class="mpp-dropdown-container" style="display: none; position: absolute; top: 100%; left: 0; right: 0; border-radius: 8px; box-shadow: 0 12px 28px rgba(0,0,0,0.15); max-height: 220px; overflow-y: auto; z-index: 100; margin-top: 4px;"></div>
+                        </div>
+                        <div>
+                            <label class="mpp-field-label" style="display: flex; justify-content: space-between; align-items: center;">
+                                <span><i class="fas fa-barcode" style="color: #4361ee; margin-right: 4px;"></i> Barcode</span>
+                                <span id="mpp_barcode_status" style="font-size: 0.72rem; color: #10b981; font-weight: 700;"></span>
+                            </label>
+                            <div style="display: flex; gap: 6px;">
+                                <input type="text" id="mpp_barcode_input" class="form-control mpp-input" placeholder="Scan or enter barcode..." autocomplete="off" onkeydown="if(event.key==='Enter'){ event.preventDefault(); mpp_scanBarcode(this.value); }" style="height: 40px; border-radius: 8px; font-family: monospace; font-size: 0.88rem; flex: 1;">
+                                <button type="button" class="btn btn-secondary" id="mppBarcodeBtn" onclick="if(document.getElementById('mpp_barcode_input').value.trim()){ mpp_scanBarcode(document.getElementById('mpp_barcode_input').value); } else { toggleMppBarcodeScanner(); }" title="Scan Barcode (Camera / USB Scanner)" style="padding: 0 10px; height: 40px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: #eef2ff; color: #4361ee; border: 1px solid #c7d2fe;">
+                                    <i class="fas fa-barcode"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="mpp-field-label">Batch No</label>
+                            <input type="text" id="mpp_batch" class="form-control mpp-input" placeholder="Auto if blank" style="height: 40px; border-radius: 8px; font-size: 0.88rem;">
+                        </div>
+                        <div>
+                            <label class="mpp-field-label">Expiry Date <span style="color: #ef4444;">*</span></label>
+                            <input type="date" id="mpp_expiry" class="form-control mpp-input" style="height: 40px; border-radius: 8px; font-size: 0.88rem;">
+                        </div>
+                    </div>
+
+                    <!-- Row 2: CTN Qty, Loose PCS, Paid PCS, Free PCS, CTN Cost, Unit Cost, Sale, MRP, + Add -->
+                    <div class="mpp-entry-row2" style="display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 62px;">
+                            <label class="mpp-qty-label-ctn">CTN Qty</label>
+                            <input type="number" id="mpp_ctn_qty" class="form-control mpp-input mpp-inp-ctn" value="0" min="0" oninput="mpp_calcFromCtn()" style="height: 38px; border-radius: 8px; text-align: center; font-weight: 700; padding: 0 4px;">
+                        </div>
+                        <div style="flex: 1; min-width: 62px;">
+                            <label class="mpp-field-label">Loose PCS</label>
+                            <input type="number" id="mpp_loose_pcs" class="form-control mpp-input" value="0" min="0" oninput="mpp_calcFromLoose()" style="height: 38px; border-radius: 8px; text-align: center; font-weight: 700; padding: 0 4px;">
+                        </div>
+                        <div style="flex: 1; min-width: 62px;">
+                            <label class="mpp-field-label">Paid PCS</label>
+                            <input type="number" id="mpp_paid_pcs" class="form-control mpp-input mpp-inp-paid" value="0" min="0" oninput="mpp_calcFromPaid()" style="height: 38px; border-radius: 8px; text-align: center; font-weight: 800; padding: 0 4px;">
+                        </div>
+                        <div style="flex: 1; min-width: 68px;">
+                            <label class="mpp-field-label" style="color: #10b981; font-weight: 800; white-space: nowrap;"><i class="fas fa-gift"></i> Free PCS</label>
+                            <input type="number" id="mpp_free_pcs" class="form-control mpp-input mpp-inp-free" value="0" min="0" style="height: 38px; border-radius: 8px; text-align: center; font-weight: 800; padding: 0 4px;">
+                        </div>
+                        <div style="flex: 1; min-width: 70px;">
+                            <label class="mpp-field-label" style="white-space: nowrap;">CTN Cost (৳)</label>
+                            <input type="number" step="0.01" id="mpp_ctn_cost" class="form-control mpp-input" placeholder="0.00" oninput="mpp_calcFromCtnCost()" style="height: 38px; border-radius: 8px; text-align: center; font-weight: 600; padding: 0 4px;">
+                        </div>
+                        <div style="flex: 1; min-width: 70px;">
+                            <label class="mpp-field-label" style="white-space: nowrap;">Unit Cost (৳)</label>
+                            <input type="number" step="0.01" id="mpp_unit_cost" class="form-control mpp-input" placeholder="0.00" oninput="mpp_calcFromUnitCost()" style="height: 38px; border-radius: 8px; text-align: center; font-weight: 600; padding: 0 4px;">
+                        </div>
+                        <div style="flex: 1; min-width: 65px;">
+                            <label class="mpp-field-label" style="white-space: nowrap;">Sale (৳)</label>
+                            <input type="number" step="0.01" id="mpp_sale_price" class="form-control mpp-input" placeholder="0.00" style="height: 38px; border-radius: 8px; text-align: center; font-weight: 600; padding: 0 4px;">
+                        </div>
+                        <div style="flex: 1; min-width: 65px;">
+                            <label class="mpp-field-label" style="white-space: nowrap;">MRP (৳)</label>
+                            <input type="number" step="0.01" id="mpp_mrp_price" class="form-control mpp-input" placeholder="0.00" style="height: 38px; border-radius: 8px; text-align: center; font-weight: 600; padding: 0 4px;">
+                        </div>
+                        <div style="flex-shrink: 0;">
+                            <button type="button" id="mpp_btn_add" onclick="mpp_addItem()" class="btn" style="height: 38px; padding: 0 16px; background: #059669; color: white; font-weight: 700; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: none; cursor: pointer;">
+                                <i class="fas fa-plus"></i> Add
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 3: Added Products Table -->
+                <div class="table-responsive mpp-table-wrap" style="border-radius: 12px; margin-bottom: 16px; overflow-x: auto;">
+                    <table class="mpp-table" style="width: 100%; border-collapse: collapse; min-width: 680px;">
+                        <thead>
+                            <tr class="mpp-thead-tr" style="font-size: 0.75rem; font-weight: 800; text-transform: uppercase;">
+                                <th style="padding: 10px 14px; text-align: left;">PRODUCT</th>
+                                <th style="padding: 10px 10px; text-align: left;">BARCODE</th>
+                                <th style="padding: 10px 10px; text-align: left;">BATCH</th>
+                                <th style="padding: 10px 10px; text-align: left;">EXPIRY</th>
+                                <th style="padding: 10px 8px; text-align: center;">PAID QTY</th>
+                                <th style="padding: 10px 8px; text-align: center; color: #16a34a;"><i class="fas fa-gift"></i> FREE</th>
+                                <th style="padding: 10px 8px; text-align: center;">INBOUND STK</th>
+                                <th style="padding: 10px 10px; text-align: right;">COST</th>
+                                <th style="padding: 10px 14px; text-align: right;">TOTAL</th>
+                                <th style="padding: 10px 8px; text-align: center; width: 40px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="mpp_table_body">
+                            <!-- Injected rows -->
+                        </tbody>
+                    </table>
+                    <div id="mpp_empty_row" style="text-align: left; padding: 24px 20px; font-size: 0.88rem; font-weight: 500;">
+                        No products added to this purchase yet.
+                    </div>
+                </div>
+
+                <!-- Section 4: Modal Footer Row -->
+                <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 6px; flex-wrap: wrap; gap: 12px;">
+                    <div class="mpp-grand-total-label" style="font-size: 1.25rem; font-weight: 800;">
+                        Grand Total: <span id="mpp_grand_total" style="font-weight: 800;">৳ 0</span>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <button type="button" class="btn" onclick="closeModal('multiPurchaseModal')" style="background: #475569; color: white; border-radius: 8px; padding: 9px 24px; font-weight: 700; border: none; cursor: pointer;">Cancel</button>
+                        <button type="button" id="mpp_btn_save" class="btn" onclick="mpp_submit()" style="background: #4361ee; color: white; border-radius: 8px; padding: 9px 24px; font-weight: 700; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;">
+                            <i class="fas fa-save"></i> Save & Receive Stock
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Master Item Modal (Categories, Brands, Warehouses, Bank Accounts) -->
+    <div id="editMasterModal" class="modal">
+        <div class="modal-content" style="max-width: 440px;">
+            <div class="modal-header">
+                <h3 id="editMasterModalTitle"><i class="fas fa-edit"></i> Edit Item</h3>
+                <button type="button" class="btn-close" onclick="closeModal('editMasterModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="editMasterForm" onsubmit="event.preventDefault(); saveMasterItemEdit();">
+                    <input type="hidden" id="editMasterSheet">
+                    <input type="hidden" id="editMasterId">
+                    <input type="hidden" id="editMasterIdKey">
+                    <input type="hidden" id="editMasterNameKey">
+                    <div class="form-group" style="margin-bottom: 14px;">
+                        <label id="editMasterIdLabel" style="font-size:0.8rem; font-weight:600; color:#64748b; margin-bottom:5px; text-transform:uppercase; letter-spacing:0.5px;">Item ID</label>
+                        <input type="text" id="editMasterIdDisplay" class="form-control" readonly style="background:#f1f5f9; color:#475569; font-weight:600; cursor:not-allowed;">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 14px;">
+                        <label id="editMasterNameLabel" style="font-weight:600; margin-bottom:6px;">Name</label>
+                        <input type="text" id="editMasterInput" class="form-control" placeholder="Enter name..." required autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label style="font-weight:600; margin-bottom:6px;">Status</label>
+                        <select id="editMasterStatus" class="form-control">
+                            <option value="Active">Active</option>
+                            <option value="Inactive">Inactive</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('editMasterModal')">Cancel</button>
+                <button type="button" class="btn btn-primary" id="btnSaveMasterEdit" onclick="saveMasterItemEdit()" style="display:flex; align-items:center; gap:6px;">
+                    <i class="fas fa-save"></i> Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Barcode Sticker Print Modal -->
+    <div id="printBarcodeModal" class="modal">
+        <div class="modal-content" style="max-width: 820px; width: 95%; border-radius: 16px; overflow: hidden; border: none; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);">
+            <div class="modal-header" style="background: #4361ee; color: white; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center;">
+                <h3 id="printBarcodeModalTitle" style="margin: 0; font-size: 1.15rem; font-weight: 800; display: flex; align-items: center; gap: 8px; color: white;">
+                    <i class="fas fa-barcode"></i> <span>Print Barcode Stickers</span>
+                </h3>
+                <button type="button" class="btn-close" onclick="closeModal('printBarcodeModal')" style="color: white; opacity: 0.9; font-size: 1.4rem; background: none; border: none; cursor: pointer;">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 20px; max-height: calc(90vh - 130px); overflow-y: auto;">
+                <!-- Configuration Bar -->
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between;">
+                    <!-- Sticker size selector -->
+                    <div>
+                        <label style="display: block; font-size: 0.74rem; font-weight: 800; color: #475569; text-transform: uppercase; margin-bottom: 4px;">Sticker Size</label>
+                        <select id="pb_sticker_size" class="form-control" onchange="renderBarcodeStickerPreview()" style="height: 36px; font-size: 0.85rem; font-weight: 600; padding: 0 10px; border-radius: 8px;">
+                            <option value="small" selected>Very Small (38mm × 25mm)</option>
+                            <option value="micro">Micro Label (30mm × 20mm)</option>
+                            <option value="standard">Standard (50mm × 30mm)</option>
+                        </select>
+                    </div>
+
+                    <!-- Single product copies count -->
+                    <div id="pb_single_copies_wrap" style="display: flex; flex-direction: column;">
+                        <label style="display: block; font-size: 0.74rem; font-weight: 800; color: #475569; text-transform: uppercase; margin-bottom: 4px;">Copies / Labels</label>
+                        <div style="display: flex; gap: 6px; align-items: center;">
+                            <input type="number" id="pb_copies" min="1" max="500" value="4" oninput="renderBarcodeStickerPreview()" style="width: 70px; height: 36px; text-align: center; font-weight: 800; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 0.9rem;">
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="setPbCopies(1)" style="padding: 4px 8px; font-size: 0.75rem;">1</button>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="setPbCopies(4)" style="padding: 4px 8px; font-size: 0.75rem;">4</button>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="setPbCopies(12)" style="padding: 4px 8px; font-size: 0.75rem;">12</button>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="setPbCopies(24)" style="padding: 4px 8px; font-size: 0.75rem;">24</button>
+                        </div>
+                    </div>
+
+                    <!-- Batch All Mode options -->
+                    <div id="pb_batch_options_wrap" style="display: none; align-items: center; gap: 10px;">
+                        <div>
+                            <label style="display: block; font-size: 0.74rem; font-weight: 800; color: #475569; text-transform: uppercase; margin-bottom: 4px;">Copies Per Product</label>
+                            <input type="number" id="pb_batch_copies" min="1" max="100" value="1" oninput="renderBarcodeStickerPreview()" style="width: 70px; height: 36px; text-align: center; font-weight: 800; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 0.9rem;">
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 0.74rem; font-weight: 800; color: #475569; text-transform: uppercase; margin-bottom: 4px;">Filter Category</label>
+                            <select id="pb_batch_cat_filter" class="form-control" onchange="renderBarcodeStickerPreview()" style="height: 36px; font-size: 0.85rem; padding: 0 8px; border-radius: 8px;">
+                                <option value="">All Categories</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Display fields toggle -->
+                    <div style="display: flex; gap: 12px; align-items: center;">
+                        <label style="font-size: 0.8rem; font-weight: 600; display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none;">
+                            <input type="checkbox" id="pb_show_price" checked onchange="renderBarcodeStickerPreview()"> Price (MRP)
+                        </label>
+                        <label style="font-size: 0.8rem; font-weight: 600; display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none;">
+                            <input type="checkbox" id="pb_show_store" checked onchange="renderBarcodeStickerPreview()"> Store Name
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Preview Area Header -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div style="font-size: 0.82rem; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em;">
+                        <i class="fas fa-eye"></i> Sticker Layout Preview (<span id="pb_sticker_count">0</span> stickers)
+                    </div>
+                    <div style="font-size: 0.75rem; color: #059669; font-weight: 700; background: #ecfdf5; padding: 2px 8px; border-radius: 6px; border: 1px solid #a7f3d0;">
+                        <i class="fas fa-check-circle"></i> High Density Vector Code-128
+                    </div>
+                </div>
+
+                <!-- Live Sticker Sheet Preview Container -->
+                <div style="background: #e2e8f0; padding: 16px; border-radius: 12px; max-height: 420px; overflow-y: auto; box-shadow: inset 0 2px 4px rgba(0,0,0,0.06);">
+                    <div id="pb_preview_grid" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-start;">
+                        <!-- Generated stickers injected here -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer" style="padding: 14px 20px; background: #f8fafc; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                <div style="font-size: 0.82rem; color: #64748b;">
+                    <i class="fas fa-print" style="color: #4361ee;"></i> Ready for standard thermal label printers (38×25mm) or multi-column A4 sticker sheets.
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('printBarcodeModal')">Close</button>
+                    <button type="button" class="btn btn-primary" onclick="triggerStickerPrint()" style="background: #4361ee; display: inline-flex; align-items: center; gap: 8px; font-weight: 700; padding: 8px 20px;">
+                        <i class="fas fa-print"></i> <span id="pb_print_btn_text">Print Stickers</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alert Modal -->
+    <div id="generalAlertModal" class="modal">
+        <div class="modal-content" style="max-width: 360px; text-align: center; padding: 25px;">
+            <i class="fas fa-info-circle fa-3x" style="color: var(--primary); margin-bottom: 12px;"></i>
+            <h3 id="generalAlertTitle">Notice</h3>
+            <p id="generalAlertMsg" style="color: #64748b; margin: 10px 0 20px;"></p>
+            <button class="btn btn-primary" onclick="closeModal('generalAlertModal')" style="width:100%;">OK</button>
+        </div>
+    </div>
+
+    <!-- Logout Modal -->
+    <div id="logoutConfirmModal" class="modal">
+        <div class="modal-content" style="max-width: 340px; text-align: center; padding: 25px;">
+            <i class="fas fa-sign-out-alt fa-3x" style="color: #ef4444; margin-bottom: 12px;"></i>
+            <h3>Logout</h3>
+            <p style="color: #64748b; margin: 10px 0 20px;">Are you sure you want to end your session?</p>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <button class="btn btn-danger" onclick="executeLogout()">Logout</button>
+                <button class="btn btn-secondary" onclick="closeModal('logoutConfirmModal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts Module Bootstrap -->
+    <script type="module" src="/src/app.js"></script>
+    <script type="module" src="/src/shoppilot.js"></script>
+</body>
+</html>
